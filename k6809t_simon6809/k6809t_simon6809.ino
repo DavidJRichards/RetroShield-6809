@@ -31,6 +31,7 @@
 // -----------------------------------------------------------------------------
 // 9/29/2019    Bring-up on Teensy 3.5.                             Erturk
 // 19 Jan 2019  Add Reset and NMI buttons                           DJRMu f
+#define TM1638_DISPLAY
 
 #include <TimerOne.h>
 #include <SD.h>
@@ -48,6 +49,20 @@
 SSD1306AsciiWire oled;
 const int chipSelect = BUILTIN_SDCARD;
 
+#ifdef TM1638_DISPLAY
+#include <TM1638.h>
+#include <TM1638QYF.h>
+#include "keypad.h"
+//#include "GString.h"
+// define a module on data pin 18, clock pin 19 and strobe pin 31
+TM1638QYF tm1638(44,45,46);
+TM1638QYF* _tm1638;
+word mode;
+unsigned long startTime;
+#endif
+#include "KY11.h"
+#define KY11_BASE         0xC000 //0xFF78 //0177570       // KY11-LB Switch Register
+KY11 operatorconsole(KY11_BASE,1);
 ////////////////////////////////////////////////////////////////////
 // Options
 //   outputDEBUG: Print memory access debugging messages.
@@ -1540,6 +1555,13 @@ void cpu_tick()
     if (uP_ADDR == 0xD000)
       DATA_OUT = FTDI_Read();
     else
+    if (operatorconsole.here(uP_ADDR)) 
+    {
+      //address_valid = true;
+      DATA_OUT = operatorconsole.read(uP_ADDR);
+    }
+    
+    else
       DATA_OUT = 0xFF;
 
     // Start driving the databus out
@@ -1547,7 +1569,7 @@ void cpu_tick()
     
 #if outputDEBUG
     char tmp[40];
-    sprintf(tmp, "-- A=%0.4X D=%0.2X\n", uP_ADDR, DATA_OUT);
+    sprintf(tmp, "-- A=%04X D=%02X\n", uP_ADDR, DATA_OUT);
     Serial1.write(tmp);
 #endif
 
@@ -1566,9 +1588,14 @@ void cpu_tick()
     if (uP_ADDR == 0xD000)
       Serial.write(DATA_IN);
 
+    else if (operatorconsole.here(uP_ADDR)) {
+      //address_valid = true;
+      operatorconsole.write(uP_ADDR,DATA_IN);
+    }
+
 #if outputDEBUG
     char tmp[40];
-    sprintf(tmp, "WR A=%0.4X D=%0.2X\n", uP_ADDR, DATA_IN);
+    sprintf(tmp, "WR A=%04X D=%02X\n", uP_ADDR, DATA_IN);
     Serial1.write(tmp);
 #endif
   }
@@ -1740,6 +1767,17 @@ void setup()
   oled.begin(&Adafruit128x64, I2C_ADDRESS);
 #endif // RST_PIN >= 0
 
+
+#ifdef TM1638_DISPLAY
+  startTime = millis();
+  _tm1638 = &tm1638;
+  tm1638.setupDisplay(true, 7);
+  tm1638.setDisplayToString("", 1);
+  cmdindex = 0;
+  cmdline[cmdindex] = 0;
+  mode = 0;
+#endif
+
   oled.setFont(X11fixed7x14);
   oled.clear();
   oled.set2X();
@@ -1796,7 +1834,7 @@ void setup()
   else {
     Serial.println("error opening file, using default");
     // copy forth image to ram
-    data=eprom;
+    data=(unsigned char*)eprom;
     for(i=eprom_start; i<=eprom_finish; i++)
     {
       RAM[i]=*data++;
@@ -1819,7 +1857,9 @@ void setup()
   for(int i=0;i<25;i++) cpu_tick();  
   uP_release_reset();
 
+  delay(500);
   Serial.println("\n");
+  oled.clear();
 }
 
 ////////////////////////////////////////////////////////////////////
@@ -1854,10 +1894,10 @@ void loop()
     if (currentMillis - lastMillis > 1000)
     {
           char tmp[20];
-oled.clear();
+oled.home();
 //        oled.println("CPS:");
 //        oled.println(cycles);
-    sprintf(tmp, "A=%0.4X\n\rD=%0.2X", uP_ADDR, DATA_OUT);
+    sprintf(tmp, "A=%04X\n\rD=%02X", uP_ADDR, DATA_OUT);
     oled.print(tmp);
         lastMillis = currentMillis;
         cycles = 0;
@@ -1865,6 +1905,11 @@ oled.clear();
 
     }
 #endif
+    
+#ifdef TM1638_DISPLAY
+  panel_update();
+#endif
+
     
   }
 }

@@ -1,0 +1,63 @@
+#include <SdFat.h>
+
+SdFatSdioEX sd;
+
+// Log file.
+SdFile myFile;
+
+// serial output steam
+ArduinoOutStream cout(Serial);
+
+// store error strings in flash
+#define sdErrorMsg(msg) sd.errorPrint(F(msg));
+
+void setup() {
+  delay(2000);
+  Serial.begin(9600);
+  
+  // Wait for USB Serial 
+  while (!Serial) {
+    SysCall::yield();
+  }
+
+  if (!sd.cardBegin()) {
+    sdErrorMsg("\ncardBegin failed");
+    Serial.println("\ncardBegin failed");
+  }
+
+    // open a new file and immediately close it:
+  Serial.println("Creating example.txt...");
+  myFile.open("example.txt", FILE_WRITE);
+  myFile.println("test data");
+  myFile.close();
+  
+  // Check to see if the file exists:
+  if (sd.exists("example.txt")) {
+    Serial.println("example.txt exists.");
+  } else {
+    Serial.println("example.txt doesn't exist.");
+  }
+
+  myFile.open("example2.txt", FILE_WRITE);
+  myFile.println("test data");
+
+ }
+
+
+void loop() {
+
+  Serial.println("Enter some data");
+  while (!Serial.available()) {
+  }
+  String sin = Serial.readString();
+  Serial.println(sin);
+  myFile.println(sin);
+
+  if (sin == "exit") {
+    Serial.println("file closed");
+    myFile.close();
+  } else {
+    Serial.println("continue");
+  }
+ 
+}
