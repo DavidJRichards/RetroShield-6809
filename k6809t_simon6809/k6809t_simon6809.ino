@@ -1,3 +1,4 @@
+
 ////////////////////////////////////////////////////////////////////
 // RetroShield 6809 for Teensy 3.5
 // Simon6809
@@ -30,12 +31,21 @@
 // Date         Comments                                            Author
 // -----------------------------------------------------------------------------
 // 9/29/2019    Bring-up on Teensy 3.5.                             Erturk
-// 19 Jan 2019  Add Reset and NMI buttons                           DJRMu f
+// 19 Jan 2019  Add Reset and NMI buttons                           DJRM
+// 26 May 2020  Add ACIA 6850
+
+//  File dataFile = SD.open("ef09.bin");
+//  File dataFile = SD.open("figF09.bin");
+#define DATAFILE "ef09.bin"
+
 #define TM1638_DISPLAY
+#define OLED_DISPLAY
 
 #include <TimerOne.h>
 #include <SD.h>
 #include <SPI.h>
+
+#ifdef OLED_DISPLAY
 #include <Wire.h>
 #include "SSD1306Ascii.h"
 #include "SSD1306AsciiWire.h"
@@ -47,6 +57,8 @@
 #define RST_PIN -1
 
 SSD1306AsciiWire oled;
+#endif // OLED_DISPLAY
+
 const int chipSelect = BUILTIN_SDCARD;
 
 #ifdef TM1638_DISPLAY
@@ -63,6 +75,12 @@ unsigned long startTime;
 #include "KY11.h"
 #define KY11_BASE         0xC000 //0xFF78 //0177570       // KY11-LB Switch Register
 KY11 operatorconsole(KY11_BASE,1);
+
+#include "ACIA6850.h"
+#define CONSOLE_BASE      0xC400 // ACIA base address
+ACIA6850 console(1,CONSOLE_BASE,9600);
+//M7856 tu58(5,TU58_BASE,9600);
+
 ////////////////////////////////////////////////////////////////////
 // Options
 //   outputDEBUG: Print memory access debugging messages.
@@ -1554,7 +1572,12 @@ void cpu_tick()
     // FTDI?
     if (uP_ADDR == 0xD000)
       DATA_OUT = FTDI_Read();
-    else
+    else 
+    if (console.here(uP_ADDR)) {
+      //address_valid = true;
+      DATA_OUT = console.read(uP_ADDR);
+    } 
+    else 
     if (operatorconsole.here(uP_ADDR)) 
     {
       //address_valid = true;
@@ -1587,8 +1610,15 @@ void cpu_tick()
     // FTDI?
     if (uP_ADDR == 0xD000)
       Serial.write(DATA_IN);
-
-    else if (operatorconsole.here(uP_ADDR)) {
+    else
+    if (console.here(uP_ADDR)) 
+    {
+      //address_valid = true;
+      console.write(uP_ADDR,DATA_IN);
+    } 
+    else    
+    if (operatorconsole.here(uP_ADDR)) 
+    {
       //address_valid = true;
       operatorconsole.write(uP_ADDR,DATA_IN);
     }
@@ -1758,15 +1788,15 @@ void setup()
   unsigned long i;
   unsigned char buff;
   unsigned char * data;
+#ifdef OLED_DISPLAY  
   Wire.begin();
   Wire.setClock(400000L);
-
-#if RST_PIN >= 0
+  #if RST_PIN >= 0
   oled.begin(&Adafruit128x64, I2C_ADDRESS, RST_PIN);
-#else // RST_PIN >= 0
+  #else // RST_PIN >= 0
   oled.begin(&Adafruit128x64, I2C_ADDRESS);
-#endif // RST_PIN >= 0
-
+  #endif // RST_PIN >= 0
+#endif // OLED_DISPLAY
 
 #ifdef TM1638_DISPLAY
   startTime = millis();
@@ -1778,6 +1808,7 @@ void setup()
   mode = 0;
 #endif
 
+#ifdef OLED_DISPLAY
   oled.setFont(X11fixed7x14);
   oled.clear();
   oled.set2X();
@@ -1785,6 +1816,7 @@ void setup()
   oled.set2X();
   oled.println("1234 ABCD");
 //  oled.println("5678 90EF");
+#endif // OLED_DISPLAY
 
   Serial.begin(115200);
   Serial1.begin(115200);
@@ -1816,7 +1848,8 @@ void setup()
   // open the file. note that only one file can be open at a time,
   // so you have to close this one before opening another.
 //  File dataFile = SD.open("ef09.bin");
-  File dataFile = SD.open("ef09.bin");
+//  File dataFile = SD.open("figF09.bin");
+  File dataFile = SD.open(DATAFILE);
 
   // if the file is available, read it:
   if (dataFile) {
@@ -1859,7 +1892,10 @@ void setup()
 
   delay(500);
   Serial.println("\n");
+#ifdef OLED_DISPLAY  
   oled.clear();
+#endif //OLED_DISPLAY  
+  console.restart(9600);
 }
 
 ////////////////////////////////////////////////////////////////////
@@ -1880,6 +1916,10 @@ void loop()
    long currentMillis = millis();
 
     serialEvent0();
+    
+  // Check for ACIA 6850 state changes
+    console.event();
+    
     cpu_tick();
     cycles++;
 
@@ -1893,18 +1933,23 @@ void loop()
 #if 1
     if (currentMillis - lastMillis > 1000)
     {
-          char tmp[20];
-oled.home();
+#ifdef OLED_DISPLAY      
+      char tmp[20];
+      oled.home();
 //        oled.println("CPS:");
 //        oled.println(cycles);
-    sprintf(tmp, "A=%04X\n\rD=%02X", uP_ADDR, DATA_OUT);
-    oled.print(tmp);
-        lastMillis = currentMillis;
-        cycles = 0;
-        //digitalWrite(uP_IRQ_N, HIGH);
-
+      sprintf(tmp, "A=%04X\n\rD=%02X", uP_ADDR, DATA_OUT);
+      oled.print(tmp);
+#endif // OLED_DISPLAY    
+      lastMillis = currentMillis;
+      cycles = 0;
+      //digitalWrite(uP_IRQ_N, HIGH);
     }
 #endif
+
+  // Check for M7856 state changes
+  console.event();
+//  tu58.event();
     
 #ifdef TM1638_DISPLAY
   panel_update();

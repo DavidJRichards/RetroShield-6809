@@ -47,3 +47,6 @@ html
 
 #ignore files in here
 ignore
+
+#temporary backup
+* - Copy

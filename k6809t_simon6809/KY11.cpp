@@ -24,8 +24,10 @@ void KY11::write(unsigned int address, unsigned int value) {
         Serial.println(tmp);
     if (address == this->address) {
       this->value = value;  
-//      _tm1638->setDisplayToDecNumber(value, 1<<5, false);       
+//      _tm1638->setDisplayToDecNumber(value, 1<<5, false);  
+#ifdef TM1638_DISPLAY  
       _tm1638->setDisplayToHexNumber(value, 1<<5, false);  
+#endif // TM1638_DISPLAY      
       deposit_data=this->value;     
     }
 }

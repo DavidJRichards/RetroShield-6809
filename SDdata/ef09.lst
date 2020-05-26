@@ -1,0 +1,3539 @@
+0000:                      ;TITLE 6809 eForth
+0000:                 
+0000:                 ; $Id: ef09.asm,v 1.1 1997/11/24 02:56:01 root Exp $
+0000:                 ;
+0000:                 ;===============================================================
+0000:                 ;
+0000:                 ;       eForth 1.0 by Bill Muench and C. H. Ting, 1990
+0000:                 ;       Much of the code is derived from the following sources:
+0000:                 ;               8086 figForth by Thomas Newman, 1981 and Joe smith, 1983
+0000:                 ;               aFORTH by John Rible
+0000:                 ;               bFORTH by Bill Muench
+0000:                 ;
+0000:                 ;       The goal of this implementation is to provide a simple eForth Model
+0000:                 ;       which can be ported easily to many 8, 16, 24 and 32 bit CPU's.
+0000:                 ;       The following attributes make it suitable for CPU's of the '90:
+0000:                 ;
+0000:                 ;               small machine dependent kernel and portable high level code
+0000:                 ;               source code in the MASM format
+0000:                 ;               direct threaded code
+0000:                 ;               separated code and name dictionaries
+0000:                 ;               simple vectored terminal and file interface to host computer
+0000:                 ;               aligned with the proposed ANS Forth Standard
+0000:                 ;               easy upgrade path to optimize for specific CPU
+0000:                 ;
+0000:                 ;       You are invited to implement this Model on your favorite CPU and
+0000:                 ;       contribute it to the eForth Library for public use. You may use
+0000:                 ;       a portable implementation to advertise more sophisticated and
+0000:                 ;       optimized version for commercial purposes. However, you are
+0000:                 ;       expected to implement the Model faithfully. The eForth Working
+0000:                 ;       Group reserves the right to reject implementation which deviates
+0000:                 ;       significantly from this Model.
+0000:                 ;
+0000:                 ;       As the ANS Forth Standard is still evolving, this Model will
+0000:                 ;       change accordingly. Implementations must state clearly the
+0000:                 ;       version number of the Model being tracked.
+0000:                 ;
+0000:                 ;       Representing the eForth Working Group in the Silicon Valley FIG Chapter.
+0000:                 ;       Send contributions to:
+0000:                 ;
+0000:                 ;               Dr. C. H. Ting
+0000:                 ;               156 14th Avenue
+0000:                 ;               San Mateo, CA 94402
+0000:                 ;               (415) 571-7639
+0000:                 ;
+0000:                 ;===============================================================
+0000:                 ; $Log: ef09.asm,v $
+0000:                 ; Revision 1.1  1997/11/24 02:56:01  root
+0000:                 ; Initial revision
+0000:                 ;
+0000:                 ;===============================================================
+0000:                 ;; Version control
+0000:                 
+0000:                 VER             EQU     1                       ;major release version
+0000:                 EXT             EQU     0                       ;minor extension
+0000:                 
+0000:                 ;; Constants
+0000:                 
+0000:                 TRUEE           EQU     -1                      ;true flag
+0000:                 
+0000:                 COMPO           EQU     $40                     ;lexicon compile only bit
+0000:                 IMEDD           EQU     $80                     ;lexicon immediate bit
+0000:                 MASKK           EQU     $1F7F                   ;lexicon bit mask
+0000:                 
+0000:                 CFAOFF          EQU     3                       ;offset from word entry to code field area
+0000:                                                                 ; (length of JSR)
+0000:                 CELLL           EQU     2                       ;size of a cell
+0000:                 BASEE           EQU     10                      ;default radix
+0000:                 VOCSS           EQU     8                       ;depth of vocabulary stack
+0000:                 
+0000:                 BKSPP           EQU     8                       ;back space
+0000:                 BKSPP2          EQU     127                     ;back space
+0000:                 LF              EQU     10                      ;line feed
+0000:                 CRR             EQU     13                      ;carriage return
+0000:                 ERR             EQU     27                      ;error escape
+0000:                 TIC             EQU     39                      ;tick
+0000:                 
+0000:                 CALLL           EQU     $12BD                   ;NOP CALL opcodes
+0000:                 
+0000:                 ACAIC           EQU     $c400                   ; ACIA Control
+0000:                 ACAID           EQU     ACAIC+1                 ; ACIA Data
+0000:                 
+0000:                 ;; Memory allocation
+0000:                 
+0000:                 EM              EQU     $4000                   ;top of memory
+0000:                 US              EQU     64*CELLL                ;user area size in cells
+0000:                 RTS             EQU     128*CELLL               ;return stack/TIB size
+0000:                 
+0000:                 UPP             EQU     EM-US                   ;start of user area (UP0)
+0000:                 RPP             EQU     UPP-8*CELLL             ;start of return stack (RP0)
+0000:                 TIBB            EQU     RPP-RTS                 ;terminal input buffer (TIB)
+0000:                 SPP             EQU     TIBB-8*CELLL            ;start of data stack (SP0)
+0000:                 
+0000:                 COLDD           EQU     $400                    ;cold start vector
+0000:                 CODEE           EQU     COLDD+US                ;code dictionary
+0000:                 NAMEE           EQU     EM-$0400                ;name dictionary
+0000:                 
+0000:                 ;; Initialize assembly variables
+0000:                 
+0000:                 
+0000:                 ;; Main entry points and COLD start data
+0000:                 
+0000:                                 ORG     COLDD                   ;beginning of cold boot area
+0400:                 ;               SETDP   0
+0400:                 
+0400: 10CE3E60        ORIG            lds #SPP                        ;Init stack pointer.
+0404: 108E3F70                        ldy #RPP                        ;Init return stack pointer
+0408: CE2066                          ldu #COLD1                      ;Init Instr pointer.
+040B: 3780                            pulu pc                         ;next.
+040D:                 
+040D:                 ; COLD start moves the following to USER variables.
+040D:                 ; MUST BE IN SAME ORDER AS USER VARIABLES.
+040D:                 
+040D:                 
+040D:                 UZERO           ;RMB     8                      ;reserved space in user area
+040D: 0000                            FDB     0
+040F: 0000                            FDB     0
+0411: 0000                            FDB     0
+0413: 0000                            FDB     0
+0415: 3E60                            FDB     SPP                     ;SP0
+0417: 3F70                            FDB     RPP                     ;RP0
+0419: 0493                            FDB     QRX                     ;'?KEY
+041B: 04B4                            FDB     TXSTO                   ;'EMIT
+041D: 1591                            FDB     ACCEP                   ;'EXPECT
+041F: 154E                            FDB     KTAP                    ;'TAP
+0421: 04B4                            FDB     TXSTO                   ;'ECHO
+0423: 16F9                            FDB     DOTOK                   ;'PROMPT
+0425: 000A                            FDB     BASEE                   ;BASE
+0427: 0000                            FDB     0                       ;tmp
+0429: 0000                            FDB     0                       ;SPAN
+042B: 0000                            FDB     0                       ;>IN
+042D: 0000                            FDB     0                       ;#TIB
+042F: 3E70                            FDB     TIBB                    ;TIB
+0431: 0000                            FDB     0                       ;CSP
+0433: 16AB                            FDB     INTER                   ;'EVAL
+0435: 1073                            FDB     NUMBQ                   ;'NUMBER
+0437: 0000                            FDB     0                       ;HLD
+0439: 0000                            FDB     0                       ;HANDLER
+043B: 0000                            FDB     0                       ;CONTEXT pointer
+043D:                                 ;RMB     VOCSS*2                        ;vocabulary stack
+043D: 0000                            FDB     0
+043F: 0000                            FDB     0
+0441: 0000                            FDB     0
+0443: 0000                            FDB     0
+0445: 0000                            FDB     0
+0447: 0000                            FDB     0
+0449: 0000                            FDB     0
+044B: 0000                            FDB     0 ;
+044D: 0000                            FDB     0                       ;CURRENT pointer
+044F: 0000                            FDB     0                       ;vocabulary link pointer
+0451: 208E                            FDB     CTOP                    ;CP
+0453: 3C00                            FDB     NTOP                    ;NP
+0455: 205E                            FDB     LASTN                   ;LAST
+0457:                 ULAST
+0457: 0000                            FDB     0
+0459: 0000                            FDB     0
+045B: 0000                            FDB     0
+045D: 0000                            FDB     0
+045F: 0000                            FDB     0
+0461: 0000                            FDB     0
+0463: 0000                            FDB     0
+0465: 0000                            FDB     0
+0467: 0000                            FDB     0
+0469: 0000                            FDB     0
+046B: 0000                            FDB     0
+046D: 0000                            FDB     0
+046F: 0000                            FDB     0
+0471: 0000                            FDB     0
+0473: 0000                            FDB     0
+0475: 0000                            FDB     0
+0477: 0000                            FDB     0
+0479: 0000                            FDB     0
+047B: 0000                            FDB     0
+047D: 0000                            FDB     0
+047F: 00                              FCB 0
+0480:                                 
+0480:                 ;               ORG     CODEE                   ;beginning of the code dictionary
+0480:                 
+0480:                 ;; Device dependent I/O
+0480:                 
+0480:                 ;   BYE         ( -- )
+0480:                 ;               Exit eForth.
+0480:                 
+0480: 04880000                        FDB BYE,0               
+0484: 03425945        L100            FCB 3,"BYE"
+0488: 3F              BYE             SWI
+0489: 3780                            pulu pc
+048B:                 ;BYE            ;sync
+048B:                                 
+048B:                 ;   ?RX         ( -- c T | F )
+048B:                 ;               Return input character and true, or a false if no input.
+048B:                 
+048B: 04930484                        FDB QRX,L100
+048F: 033F5258        L110            FCB 3,"?RX"
+0493: 8E0000          QRX             ldx #0
+0496:                 ;               swi3
+0496: F6C400                          ldb ACAIC
+0499: 57                              asrb
+049A: 2504                            bcs qrx1
+049C: AFE3                            stx ,--s
+049E: 3780                            pulu pc
+04A0: 4F              qrx1            clra
+04A1: F6C401                          ldb ACAID
+04A4: EDE3                            std ,--s
+04A6: 301F                            leax -1,x
+04A8: AFE3                            stx ,--s
+04AA: 3780                            pulu pc
+04AC:                 
+04AC:                 ;   TX!         ( c -- )
+04AC:                 ;               Send character c to the output device.
+04AC: 04B4048F                        FDB TXSTO,L110
+04B0: 03545821        L120            FCB 3,"TX!"
+04B4: ECE1            TXSTO           ldd ,s++
+04B6: B6C400          tx1             lda ACAIC
+04B9: 47                              asra
+04BA: 47                              asra
+04BB: 24F9                            bcc tx1
+04BD: F7C401                          stb ACAID
+04C0: 3780                            pulu pc
+04C2:                 
+04C2:                 
+04C2:                 ;   !IO         ( -- )
+04C2:                 ;               Initialize the serial I/O devices.
+04C2:                 
+04C2: 04CA04B0                        FDB STOIO,L120
+04C6: 0321494F        L130            FCB 3,"!IO"
+04CA: 3780            STOIO           pulu pc
+04CC:                 
+04CC:                 ;; The kernel
+04CC:                 
+04CC:                 ;   doLIT       ( -- w )
+04CC:                 ;               Push an inline literal.
+04CC:                                 
+04CC: 04D604C6                        FDB DOLIT,L130
+04D0: 45646F4C4954    L140            FCB COMPO+5,"doLIT"
+04D6:                 DOLIT
+04D6:                 ;;;;            ldd ,u++
+04D6: 3706                            pulu d
+04D8:                 ; 7 cycles
+04D8: 3406                            pshs d
+04DA:                 ;;;; 8 cycles
+04DA:                 ;;;;            std ,--s
+04DA: 3780                            pulu pc
+04DC:                 
+04DC:                 ;   doCLIT      ( -- w )
+04DC:                 ;               Push an inline 8-bit literal.
+04DC:                                 
+04DC: 04E704D0                        FDB DOCLIT,L140
+04E0: 46646F434C4954  L141            FCB COMPO+6,"doCLIT"
+04E7:                 DOCLIT
+04E7: 3704                            pulu b
+04E9: 1D                              sex             ; sign extended
+04EA: 3406                            pshs d
+04EC: 3780                            pulu pc
+04EE:                 
+04EE:                 ;   doLIST      ( a -- )
+04EE:                 ;               Process colon list.
+04EE:                 
+04EE: 04F904E0                        FDB DOLST,L141
+04F2: 46646F4C495354  L150            FCB COMPO+6,"doLIST"
+04F9: EFA3            DOLST           stu ,--y                ; IP on return stack
+04FB: 3540                            puls u                  ; JSR left new IP on parameter stack
+04FD:                 ;;;;            ldu ,s++
+04FD: 3780                            pulu pc                 ; FORTH NEXT IP
+04FF:                 
+04FF:                 ;   next        ( -- )
+04FF:                 ;               Run time code for the single index loop.
+04FF:                 ;               : next ( -- ) \ hilevel model
+04FF:                 ;                 r> r> dup if 1 - >r @ >r exit then drop cell+ >r ;
+04FF:                 
+04FF: 050804F2                        FDB DONXT,L150
+0503: 446E657874      L160            FCB COMPO+4,"next"
+0508: ECA4            DONXT           ldd ,y                  ; counter on return stack
+050A: 830001                          subd #1                 ; decrement
+050D: 2506                            bcs next1               ; < -> exit loop
+050F: EDA4                            std ,y                  ; decremented value back on stack
+0511: EEC4                            ldu ,u                  ; branch to begin of loop
+0513: 3780                            pulu pc
+0515: 3122            next1           leay 2,y                ; remove counter from stack
+0517: 3342                            leau 2,u                ; skip branch destination
+0519: 3780                            pulu pc
+051B:                 
+051B:                 
+051B:                 ;   ?branch     ( f -- )
+051B:                 ;               Branch if flag is zero.
+051B:                 
+051B: 05270503                        FDB QBRAN,L160
+051F: 473F6272616E63  L170            FCB COMPO+7,"?branch"
+0527:                 QBRAN           ;$CODE  COMPO+7,'?branch',QBRAN
+0527: ECE1                            ldd ,s++
+0529: 2704                            beq bran1
+052B: 3342                            leau 2,u        ; skip new IP, no branch
+052D: 3780                            pulu pc
+052F: EEC4            bran1           ldu ,u          ; go to new IP
+0531: 3780                            pulu pc
+0533:                 
+0533:                 ;   branch      ( -- )
+0533:                 ;               Branch to an inline address.
+0533:                                 
+0533: 053E051F                        FDB BRAN,L170
+0537: 466272616E6368  L180            FCB COMPO+6,"branch"
+053E: EEC4            BRAN            ldu ,u          ; destination immediate after BRANCH
+0540: 3780                            pulu pc
+0542:                 
+0542:                 ;   EXECUTE     ( ca -- )
+0542:                 ;               Execute the word at ca.
+0542:                 
+0542: 054E0537                        FDB EXECU,L180
+0546: 07455845435554  L190            FCB 7,"EXECUTE"
+054E: 39              EXECU           rts             ; code pointer on parameter stack
+054F:                 
+054F:                 ;   EXIT        ( -- )
+054F:                 ;   SEMIS
+054F:                 ;               Terminate a colon definition.
+054F:                 
+054F: 05580546                        FDB EXIT,L190
+0553: 0445584954      L200            FCB 4,"EXIT"
+0558: EEA1            EXIT            ldu ,y++        ; get calling IP from return stack
+055A: 3780                            pulu pc
+055C:                 
+055C:                 ;   !           ( w a -- )
+055C:                 ;               Pop the data stack to memory.
+055C:                                 
+055C: 05620553                        FDB STORE,L200
+0560: 0121            L210            FCB 1,"!"
+0562:                 STORE
+0562:                 ;;;;            ldx ,s++
+0562:                 ;;;;            ldd ,s++
+0562:                 ;;;; faster ...
+0562: 3510                            puls x
+0564: 3506                            puls d
+0566:                                 ; we cannot use puls x,d because the order fetched would be wrong :(
+0566: ED84                            std ,x
+0568: 3780                            pulu pc
+056A:                 
+056A:                 ;   @           ( a -- w )
+056A:                 ;               Push memory location to the data stack.
+056A:                 
+056A: 05700560                        FDB AT,L210
+056E: 0140            L220            FCB 1,"@"
+0570: ECF4            AT              ldd [,s]
+0572: EDE4                            std ,s
+0574: 3780                            pulu pc
+0576:                 
+0576:                 ;   C!          ( c b -- )
+0576:                 ;               Pop the data stack to byte memory.
+0576:                 
+0576: 057D056E                        FDB CSTOR,L220
+057A: 024321          L230            FCB 2,"C!"
+057D:                 CSTOR
+057D:                 ;;;;            ldx ,s++
+057D:                 ;;;;            ldd ,s++
+057D:                 ;;;; faster ...
+057D: 3510                            puls x
+057F: 3506                            puls d
+0581:                                 ; we cannot use puls x,d because the order fetched would be wrong :(
+0581: E784                            stb ,x
+0583: 3780                            pulu pc
+0585:                 
+0585:                 
+0585:                 ;   C@          ( b -- c )
+0585:                 ;               Push byte memory location to the data stack.
+0585:                 
+0585: 058C057A                        FDB CAT,L230
+0589: 024340          L240            FCB 2,"C@"
+058C: E6F4            CAT             ldb [,s]
+058E: 4F                              clra
+058F: EDE4                            std ,s
+0591: 3780                            pulu pc
+0593:                 
+0593:                 ;   RP@         ( -- a )
+0593:                 ;               Push the current RP to the data stack.
+0593:                 
+0593: 059B0589                        FDB RPAT,L240
+0597: 03525040        L250            FCB 3,"RP@"
+059B: 3420            RPAT            pshs y
+059D: 3780                            pulu pc
+059F:                 
+059F:                 ;   RP!         ( a -- )
+059F:                 ;               Set the return stack pointer.
+059F:                 
+059F: 05A70597                        FDB RPSTO,L250
+05A3: 03525021        L260            FCB 3,"RP!"
+05A7: 3520            RPSTO           puls y
+05A9: 3780                            pulu pc
+05AB:                 
+05AB:                 ;   R>          ( -- w )
+05AB:                 ;               Pop the return stack to the data stack.
+05AB:                 
+05AB: 05B205A3                        FDB RFROM,L260
+05AF: 02523E          L270            FCB 2,"R>"
+05B2: ECA1            RFROM           ldd ,y++
+05B4:                 ;;;;            std ,--s
+05B4: 3406                            pshs d
+05B6: 3780                            pulu pc
+05B8:                 
+05B8:                 ;   I           ( -- w )
+05B8:                 ;               Copy top of return stack (current index from DO/LOOP) to the data stack.
+05B8:                 
+05B8: 05C505AF                        FDB RAT,L270
+05BC: 0149            L279            FCB 1,"I"
+05BE:                 
+05BE:                 ;   R@          ( -- w )
+05BE:                 ;               Copy top of return stack to the data stack.
+05BE:                 
+05BE: 05C505BC                        FDB RAT,L279
+05C2: 025240          L280            FCB 2,"R@"
+05C5:                 RAT
+05C5:                 I
+05C5: ECA4                            ldd ,y
+05C7:                 ;;;;            std ,--s
+05C7: 3406                            pshs d
+05C9: 3780                            pulu pc
+05CB:                 
+05CB:                 ;   >R          ( w -- )
+05CB:                 ;               Push the data stack to the return stack.
+05CB:                 
+05CB: 05D205C2                        FDB TOR,L280
+05CF: 023E52          L290            FCB 2,">R"
+05D2:                 TOR
+05D2:                 ;;;;            ldd ,s++
+05D2: 3506                            puls d
+05D4: EDA3                            std ,--y
+05D6: 3780                            pulu pc
+05D8:                 
+05D8:                 ;   SP@         ( -- a )
+05D8:                 ;               Push the current data stack pointer.
+05D8:                 
+05D8: 05E005CF                        FDB SPAT,L290
+05DC: 03535040        L300            FCB 3,"SP@"
+05E0:                 SPAT
+05E0: 1F40                            tfr s,d
+05E2: EDE3                            std ,--s
+05E4:                 ;;;; alternatively
+05E4:                 ;;;;            sts ,--s        ; does this work?
+05E4: 3780                            pulu pc
+05E6:                 
+05E6:                 ;   SP!         ( a -- )
+05E6:                 ;               Set the data stack pointer.
+05E6:                 
+05E6: 05EE05DC                        FDB SPSTO,L300
+05EA: 03535021        L310            FCB 3,"SP!"
+05EE: 10EEE4          SPSTO           lds ,s
+05F1: 3780                            pulu pc
+05F3:                 
+05F3:                 ;   DROP        ( w -- )
+05F3:                 ;               Discard top stack item.
+05F3:                 
+05F3: 05FC05EA                        FDB DROP,L310
+05F7: 0444524F50      L320            FCB 4,"DROP"
+05FC: 3262            DROP            leas 2,s
+05FE: 3780                            pulu pc
+0600:                 
+0600:                 ;   DUP         ( w -- w w )
+0600:                 ;               Duplicate the top stack item.
+0600:                 
+0600: 060805F7                        FDB DUPP,L320
+0604: 03445550        L330            FCB 3,"DUP"
+0608: ECE4            DUPP            ldd ,s
+060A:                 ;;;;            std ,--s
+060A: 3406                            pshs d
+060C: 3780                            pulu pc
+060E:                 
+060E:                 ;   SWAP        ( w1 w2 -- w2 w1 )
+060E:                 ;               Exchange top two stack items.
+060E:                 
+060E: 06170604                        FDB SWAP,L330
+0612: 0453574150      L340            FCB 4,"SWAP"
+0617:                 SWAP
+0617:                 ;;;;OLD 1: slow
+0617:                 ;;;;            ldx ,s++
+0617:                 ;;;;            ldd ,s++
+0617:                 ;;;;OLD 2: faster
+0617:                 ;;;;            puls x
+0617:                 ;;;;            puls d
+0617:                 ;;;;            pshs d,x
+0617:                 ;more efficient, without unnecessary stack pointer manipulations
+0617: ECE4                            ldd ,s
+0619: AE62                            ldx 2,s
+061B: ED62                            std 2,s 
+061D: AFE4                            stx ,s
+061F: 3780                            pulu pc
+0621:                                 
+0621:                 ;   OVER        ( w1 w2 -- w1 w2 w1 )
+0621:                 ;               Copy second stack item to top.
+0621:                 
+0621: 062A0612                        FDB OVER,L340
+0625: 044F564552      L350            FCB 4,"OVER"
+062A: EC62            OVER            ldd 2,s
+062C:                 ;;;;            std ,--s
+062C: 3406                            pshs d
+062E: 3780                            pulu pc
+0630:                 
+0630:                 ;   0<          ( n -- t )
+0630:                 ;               Return true if n is negative.
+0630:                 
+0630: 06370625                        FDB ZLESS,L350
+0634: 02303C          L360            FCB 2,"0<"
+0637: E6E4            ZLESS           ldb ,s          ; input high byte, as D low
+0639: 1D                              sex             ; sign extend to b to a/b
+063A: 1F89                            tfr a,b         ; high byte: 0 or FF copy to D low
+063C: EDE4                            std ,s          ; D: 0000 or FFFF (= -1)
+063E: 3780                            pulu pc
+0640:                 
+0640:                 ;   0=          ( n -- t )
+0640:                 ;               Return true if n is zero
+0640:                 
+0640: 06470634                        FDB ZEQUAL,L360
+0644: 02303D          L365            FCB 2,"0="
+0647:                 ZEQUAL
+0647: 8EFFFF                          ldx #TRUEE      ; true
+064A: ECE4                            ldd ,s          ; TOS
+064C: 2703                            beq ZEQUAL1     ; -> true
+064E: 8E0000                          ldx #0          ; false         
+0651: AFE4            ZEQUAL1         stx ,s          ; D: 0000 or FFFF (= -1)
+0653: 3780                            pulu pc
+0655:                 
+0655:                 ;   AND         ( w w -- w )
+0655:                 ;               Bitwise AND.
+0655:                 
+0655: 065D0644                        FDB ANDD,L365
+0659: 03414E44        L370            FCB 3,"AND"
+065D: ECE1            ANDD            ldd ,s++
+065F: A4E4                            anda ,s
+0661: E461                            andb 1,s
+0663: EDE4                            std ,s
+0665: 3780                            pulu pc
+0667:                 
+0667:                 ;   OR          ( w w -- w )
+0667:                 ;               Bitwise inclusive OR.
+0667:                 
+0667: 066E0659                        FDB ORR,L370
+066B: 024F52          L380            FCB 2,"OR"
+066E: ECE1            ORR             ldd ,s++
+0670: AAE4                            ora ,s
+0672: EA61                            orb 1,s
+0674: EDE4                            std ,s
+0676: 3780                            pulu pc
+0678:                 
+0678:                 ;   XOR         ( w w -- w )
+0678:                 ;               Bitwise exclusive OR.
+0678:                 
+0678: 0680066B                        FDB XORR,L380
+067C: 03584F52        L390            FCB 3,"XOR"
+0680: ECE1            XORR            ldd ,s++
+0682: A8E4                            eora ,s
+0684: E861                            eorb 1,s
+0686: EDE4                            std ,s
+0688: 3780                            pulu pc
+068A:                 
+068A:                 ;   D+          ( ud ud -- udsum )
+068A:                 ;               Add two unsigned double numbers and return a double sum.
+068A:                 
+068A: 0691067C                        FDB DPLUS,L390
+068E: 02442B          L391            FCB 2,"D+"
+0691: EC62            DPLUS           ldd 2,s         ; add low words
+0693: E366                            addd 6,s
+0695: ED66                            std 6,s
+0697: ECE4                            ldd ,s          ; add hig words
+0699: E965                            adcb 5,s
+069B: A964                            adca 4,s
+069D: ED64                            std 4,s
+069F: 3264                            leas 4,s        ; drop one double
+06A1: 3780                            pulu pc
+06A3:                 
+06A3:                 ;   D-          ( ud ud -- uddiff )
+06A3:                 ;               Subtract two unsigned double numbers and return a double sum.
+06A3:                 
+06A3: 06AA068E                        FDB DSUB,L391
+06A7: 02442D          L392            FCB 2,"D-"
+06AA: BD04F9          DSUB            jsr DOLST
+06AD: 0A0006910558                    FDB DNEGA,DPLUS,EXIT
+06B3:                 
+06B3:                 
+06B3:                 ;   UM+         ( u u -- udsum )
+06B3:                 ;               Add two unsigned single numbers and return a double sum.
+06B3:                 
+06B3: 06BB06A7                        FDB UPLUS,L392
+06B7: 03554D2B        L400            FCB 3,"UM+"
+06BB: ECE4            UPLUS           ldd ,s
+06BD: E362                            addd 2,s
+06BF: ED62                            std 2,s
+06C1: CC0000                          ldd #0
+06C4: C900                            adcb #0
+06C6: EDE4                            std ,s
+06C8: 3780                            pulu pc
+06CA:                 
+06CA:                 ;; Constants
+06CA:                 
+06CA:                 ;   doCONST     ( -- w )
+06CA:                 ;               Run time routine for CONSTANT
+06CA:                 
+06CA: 06D606B7                        FDB DOCONST,L400
+06CE: 47646F434F4E53  L401            FCB COMPO+7,"doCONST"
+06D6:                 DOCONST
+06D6:                 FDOCONST
+06D6: ECF4                            ldd [,s]        ; contents of W (on TOS because of JSR)
+06D8: EDE4                            std ,s          ; to TOS (replacing W)
+06DA: 3780                            pulu pc
+06DC:                 
+06DC:                 ;   0           ( -- 0 )
+06DC:                 ;               Constant 0
+06DC:                 
+06DC: 06E206CE                        FDB ZERO,L401
+06E0: 0130            L402            FCB 1,"0"
+06E2: BD06D6          ZERO            jsr FDOCONST
+06E5: 0000                            FDB 0
+06E7:                 
+06E7:                 ;   1           ( -- 1 )
+06E7:                 ;               Constant 1
+06E7:                 
+06E7: 06ED06E0                        FDB ONE,L402
+06EB: 0131            L403            FCB 1,"1"
+06ED: BD06D6          ONE             jsr FDOCONST
+06F0: 0001                            FDB 1
+06F2:                 
+06F2:                 ;   2           ( -- 2 )
+06F2:                 ;               Constant 2
+06F2:                 
+06F2: 06F806EB                        FDB TWO,L403
+06F6: 0132            L404            FCB 1,"2"
+06F8: BD06D6          TWO             jsr FDOCONST
+06FB: 0002                            FDB 2
+06FD:                 
+06FD:                 
+06FD:                 ;   -1          ( -- -1 )
+06FD:                 ;               Constant -1
+06FD:                 
+06FD: 070406F6                        FDB MONE,L404
+0701: 022D31          L405            FCB 2,"-1"
+0704: BD06D6          MONE            jsr FDOCONST
+0707: FFFF                            FDB -1
+0709:                 
+0709:                 ;; System and user variables
+0709:                 
+0709:                 ;   doVAR       ( -- a )
+0709:                 ;               Run time routine for VARIABLE and CREATE.
+0709:                 
+0709: 07130701                        FDB DOVAR,L405
+070D: 45646F564152    L410            FCB COMPO+5,"doVAR"
+0713:                 DOVAR           
+0713: BD04F9                          jsr DOLST
+0716: 05B20558                        FDB RFROM,EXIT
+071A:                 
+071A:                 ;; fast native DOVAR implementation
+071A: 3780            FDOVAR          pulu pc
+071C:                                   
+071C:                 
+071C:                 ;   UP          ( -- a )
+071C:                 ;               Pointer to the user area.
+071C:                 
+071C: 0723070D                        FDB UP,L410
+0720: 025550          L420            FCB 2,"UP"
+0723:                 UP              
+0723:                 ;;              jsr DOLST
+0723:                 ;;              FDB     DOVAR
+0723:                 ;; fast (native) DOVAR
+0723: BD071A                          jsr FDOVAR
+0726: 3F80                            FDB     UPP
+0728:                 
+0728:                 ;   doUSER      ( -- a )
+0728:                 ;               Run time routine for user variables.
+0728:                 
+0728: 07330720                        FDB DOUSE,L420
+072C: 45646F55534552  L430            FCB COMPO+5,"doUSER"
+0733:                 DOUSE           
+0733: BD04F9                          jsr DOLST
+0736: 05B20570072305                  FDB RFROM,AT,UP,AT,PLUS,EXIT
+0742:                 
+0742:                 ;; fast (native) DOUSE implementation (*NOT COMPLETE*)
+0742:                 FDOUSE
+0742: ECF4                            ldd [,s]        ; pointer to value (from JSR)
+0744: F30726                          addd UP+CFAOFF  ; dirty access to start of USER area:
+0747:                                                 ; var. UP value direct access (not
+0747:                                                 ; as a high level word)
+0747: EDE4                            std ,s          ; resulting address returned on p-stack
+0749: 3780                            pulu pc
+074B:                                 
+074B:                 ;   SP0         ( -- a )
+074B:                 ;               Pointer to bottom of the data stack.
+074B:                 
+074B: 0753072C                        FDB SZERO,L430
+074F: 03535030        L440            FCB 3,"SP0"
+0753:                 SZERO           
+0753: BD0742                          jsr FDOUSE
+0756: 0008                            FDB 8
+0758:                 ;;;;            jsr DOLST
+0758:                 ;;;;            FDB DOUSE,8
+0758:                 
+0758:                 ;   RP0         ( -- a )
+0758:                 ;               Pointer to bottom of the return stack.
+0758:                 
+0758: 0760074F                        FDB RZERO,L440
+075C: 03525030        L450            FCB 3,"RP0"
+0760:                 RZERO           
+0760: BD0742                          jsr FDOUSE
+0763: 000A                            FDB 10
+0765:                 ;;;;            jsr DOLST
+0765:                 ;;;;            FDB DOUSE,10
+0765:                 
+0765:                 ;   '?KEY       ( -- a )
+0765:                 ;               Execution vector of ?KEY.
+0765:                 
+0765: 076F075C                        FDB TQKEY,L450
+0769: 05273F4B4559    L460            FCB 5,"'?KEY"
+076F:                 TQKEY           
+076F: BD0742                          jsr FDOUSE
+0772: 000C                            FDB 12
+0774:                 ;;;;            jsr DOLST
+0774:                 ;;;;            FDB DOUSE,12
+0774:                 
+0774:                 ;   'EMIT       ( -- a )
+0774:                 ;               Execution vector of EMIT.
+0774:                 
+0774: 077E0769                        FDB TEMIT,L460
+0778: 0527454D4954    L470            FCB 5,"'EMIT"
+077E:                 TEMIT           
+077E: BD0742                          jsr FDOUSE
+0781: 000E                            FDB 14
+0783:                 ;;              jsr DOLST
+0783:                 ;;              FDB DOUSE,14
+0783:                 
+0783:                 ;   'EXPECT     ( -- a )
+0783:                 ;               Execution vector of EXPECT.
+0783:                 
+0783: 078F0778                        FDB TEXPE,L470
+0787: 07274558504543  L480            FCB 7,"'EXPECT"
+078F:                 TEXPE           
+078F: BD0742                          jsr FDOUSE
+0792: 0010                            FDB 16
+0794:                 ;;;;            jsr DOLST
+0794:                 ;;;;            FDB DOUSE,16
+0794:                 
+0794:                 ;   'TAP        ( -- a )
+0794:                 ;               Execution vector of TAP.
+0794:                 
+0794: 079D0787                        FDB TTAP,L480
+0798: 0427544150      L490            FCB 4,"'TAP"
+079D:                 TTAP            
+079D: BD0742                          jsr FDOUSE
+07A0: 0012                            FDB 18
+07A2:                 ;;;;            jsr DOLST
+07A2:                 ;;;;            FDB DOUSE,18
+07A2:                 
+07A2:                 ;   'ECHO       ( -- a )
+07A2:                 ;               Execution vector of ECHO.
+07A2:                 
+07A2: 07AC0798                        FDB TECHO,L490
+07A6: 05274543484F    L500            FCB 5,"'ECHO"
+07AC:                 TECHO           
+07AC: BD0742                          jsr FDOUSE
+07AF: 0014                            FDB 20
+07B1:                 ;;;;            jsr DOLST
+07B1:                 ;;;;            FDB DOUSE,20
+07B1:                 
+07B1:                 ;   'PROMPT     ( -- a )
+07B1:                 ;               Execution vector of PROMPT.
+07B1:                 
+07B1: 07BD07A6                        FDB TPROM,L500
+07B5: 072750524F4D50  L510            FCB 7,"'PROMPT"
+07BD:                 TPROM           
+07BD: BD0742                          jsr FDOUSE
+07C0: 0016                            FDB 22
+07C2:                 ;;;;            jsr DOLST
+07C2:                 ;;;;            FDB DOUSE,22
+07C2:                 
+07C2:                 
+07C2:                 ;   BASE        ( -- a )
+07C2:                 ;               Storage of the radix base for numeric I/O.
+07C2:                 
+07C2: 07CB07B5                        FDB BASE,L510
+07C6: 0442415345      L520            FCB 4,"BASE"
+07CB:                 BASE            
+07CB: BD0742                          jsr FDOUSE
+07CE: 0018                            FDB 24
+07D0:                 ;;;;            jsr DOLST
+07D0:                 ;;;;            FDB DOUSE,24            
+07D0:                 
+07D0:                 ;   tmp         ( -- a )
+07D0:                 ;               A temporary storage location used in parse and find.
+07D0:                 
+07D0: 07D807C6                        FDB TEMP,L520
+07D4: 43746D70        L530            FCB COMPO+3,"tmp"
+07D8:                 TEMP            
+07D8: BD0742                          jsr FDOUSE
+07DB: 001A                            FDB 26
+07DD:                 ;;;;            jsr DOLST
+07DD:                 ;;;;            FDB DOUSE,26
+07DD:                  
+07DD:                 ;   SPAN        ( -- a )
+07DD:                 ;               Hold character count received by EXPECT.
+07DD:                 
+07DD: 07E607D4                        FDB SPAN,L530
+07E1: 045350414E      L540            FCB 4,"SPAN"
+07E6:                 SPAN            
+07E6: BD0742                          jsr FDOUSE
+07E9: 001C                            FDB 28
+07EB:                 ;;;;            jsr DOLST
+07EB:                 ;;;;            FDB DOUSE,28
+07EB:                                 
+07EB:                 ;   >IN         ( -- a )
+07EB:                 ;               Hold the character pointer while parsing input stream.
+07EB:                 
+07EB: 07F307E1                        FDB INN,L540
+07EF: 033E494E        L550            FCB 3,">IN"
+07F3:                 INN             
+07F3: BD0742                          jsr FDOUSE
+07F6: 001E                            FDB 30
+07F8:                 ;;;;            jsr DOLST
+07F8:                 ;;;;            FDB DOUSE,30
+07F8:                 
+07F8:                 ;   #TIB        ( -- a )
+07F8:                 ;               Hold the current count in and address of the terminal input buffer.
+07F8:                 
+07F8: 080107EF                        FDB NTIB,L550
+07FC: 0423544942      L560            FCB 4,"#TIB"
+0801:                 NTIB            
+0801: BD0742                          jsr FDOUSE
+0804: 0020                            FDB 32
+0806:                 ;;;;            jsr DOLST
+0806:                 ;;;;            FDB DOUSE,32 ;It contains TWO cells!!!!
+0806:                 
+0806:                 ;   CSP         ( -- a )
+0806:                 ;               Hold the stack pointer for error checking.
+0806:                 
+0806: 080E07FC                        FDB CSP,L560
+080A: 03435350        L570            FCB 3,"CSP"
+080E:                 CSP             
+080E: BD0742                          jsr FDOUSE
+0811: 0024                            FDB 36
+0813:                 ;;;;            jsr DOLST
+0813:                 ;;;;            FDB DOUSE 36
+0813:                 
+0813:                 ;   'EVAL       ( -- a )
+0813:                 ;               Execution vector of EVAL.
+0813:                 
+0813: 081D080A                        FDB TEVAL,L570
+0817: 05274556414C    L580            FCB 5,"'EVAL"
+081D:                 TEVAL           
+081D: BD0742                          jsr FDOUSE
+0820: 0026                            FDB 38
+0822:                 ;;;;            jsr DOLST
+0822:                 ;;;;            FDB DOUSE,38
+0822:                 
+0822:                 ;   'NUMBER     ( -- a )
+0822:                 ;               Execution vector of NUMBER?.
+0822:                 
+0822: 082E0817                        FDB TNUMB,L580
+0826: 07274E554D4245  L590            FCB 7,"'NUMBER"
+082E:                 TNUMB           
+082E: BD0742                          jsr FDOUSE
+0831: 0028                            FDB 40
+0833:                 ;;;;            jsr DOLST
+0833:                 ;;;;            FDB DOUSE,40
+0833:                 
+0833:                 ;   HLD         ( -- a )
+0833:                 ;               Hold a pointer in building a numeric output string.
+0833:                 
+0833: 083B0826                        FDB HLD,L590
+0837: 03484C44        L600            FCB 3,"HLD"
+083B:                 HLD             
+083B: BD0742                          jsr FDOUSE
+083E: 002A                            FDB 42
+0840:                 ;;;;            jsr DOLST
+0840:                 ;;;;            FDB DOUSE,42
+0840:                 
+0840:                 ;   HANDLER     ( -- a )
+0840:                 ;               Hold the return stack pointer for error handling.
+0840:                 
+0840: 084C0837                        FDB HANDL,L600
+0844: 0748414E444C45  L610            FCB 7,"HANDLER"
+084C:                 HANDL           
+084C: BD0742                          jsr FDOUSE
+084F: 002C                            FDB 44
+0851:                 ;;;;            jsr DOLST
+0851:                 ;;;;            FDB DOUSE,44
+0851:                 
+0851:                 ;   CONTEXT     ( -- a )
+0851:                 ;               A area to specify vocabulary search order.
+0851:                 
+0851: 085D0844                        FDB CNTXT,L610
+0855: 07434F4E544558  L620            FCB 7,"CONTEXT"
+085D:                 CNTXT           
+085D: BD0742                          jsr FDOUSE
+0860: 002E                            FDB 46
+0862:                 ;;;;            jsr DOLST
+0862:                 ;;;;            FDB DOUSE,46        ;plus space for voc stack.
+0862:                 
+0862:                 ;   CURRENT     ( -- a )
+0862:                 ;               Point to the vocabulary to be extended.
+0862:                 
+0862: 086E0855                        FDB CRRNT,L620
+0866: 0743555252454E  L630            FCB 7,"CURRENT"
+086E:                 CRRNT           
+086E: BD0742                          jsr FDOUSE
+0871: 0040                            FDB 48+VOCSS*2  ;Extra cell
+0873:                 ;;;;            jsr DOLST
+0873:                 ;;;;            FDB DOUSE,48+VOCSS*2  ;Extra cell
+0873:                 
+0873:                 ;   CP          ( -- a )
+0873:                 ;               Point to the top of the code dictionary.
+0873:                 
+0873: 087A0866                        FDB CP,L630
+0877: 024350          L640            FCB 2,"CP"
+087A:                 CP              
+087A: BD0742                          jsr FDOUSE
+087D: 0044                            FDB 52+VOCSS*2
+087F:                 ;;;;            jsr DOLST
+087F:                 ;;;;            FDB DOUSE,52+VOCSS*2
+087F:                 
+087F:                 ;   NP          ( -- a )
+087F:                 ;               Point to the bottom of the name dictionary.
+087F:                                 
+087F: 08860877                        FDB NP,L640
+0883: 024E50          L650            FCB 2,"NP"
+0886:                 NP              
+0886: BD0742                          jsr FDOUSE
+0889: 0046                            FDB 54+VOCSS*2
+088B:                 ;;;;            jsr DOLST
+088B:                 ;;;;            FDB DOUSE,54+VOCSS*2
+088B:                 
+088B:                 ;   LAST        ( -- a )
+088B:                 ;               Point to the last name in the name dictionary.
+088B:                 
+088B: 08940883                        FDB LAST,L650
+088F: 044C415354      L660            FCB 4,"LAST"
+0894:                 LAST            
+0894: BD0742                          jsr FDOUSE
+0897: 0048                            FDB 56+VOCSS*2
+0899:                 ;;;;            jsr DOLST
+0899:                 ;;;;            FDB DOUSE,56+VOCSS*2
+0899:                 
+0899:                 ;; Common functions
+0899:                 
+0899:                 ;   doVOC       ( -- )
+0899:                 ;               Run time action of VOCABULARY's.
+0899:                 
+0899: 08A3088F                        FDB DOVOC,L660
+089D: 45646F564F43    L670            FCB COMPO+5,"doVOC"
+08A3:                 DOVOC           
+08A3: BD04F9                          jsr DOLST
+08A6: 05B2085D056205                  FDB RFROM,CNTXT,STORE,EXIT
+08AE:                 
+08AE:                 ;   FORTH       ( -- )
+08AE:                 ;               Make FORTH the context vocabulary.
+08AE:                 
+08AE: 08B8089D                        FDB FORTH,L670
+08B2: 05464F525448    L680            FCB 5,"FORTH"
+08B8:                 FORTH           
+08B8: BD04F9                          jsr DOLST
+08BB: 08A3                            FDB     DOVOC
+08BD: 0000                            FDB     0                       ;vocabulary head pointer
+08BF: 0000                            FDB     0                       ;vocabulary link pointer
+08C1:                 
+08C1:                 ;   ?DUP        ( w -- w w | 0 )
+08C1:                 ;               Dup tos if its is not zero.
+08C1:                 
+08C1: 08CA08B2                        FDB QDUP,L680
+08C5: 043F445550      L690            FCB 4,"?DUP"
+08CA:                 QDUP            
+08CA: BD04F9                          jsr DOLST
+08CD: 0608                            FDB     DUPP
+08CF: 052708D5                        FDB     QBRAN,QDUP1
+08D3: 0608                            FDB     DUPP
+08D5: 0558            QDUP1           FDB     EXIT
+08D7:                 
+08D7:                 ;   ROT         ( w1 w2 w3 -- w2 w3 w1 )
+08D7:                 ;               Rot 3rd item to top.
+08D7:                 
+08D7: 08DF08C5                        FDB ROT,L690
+08DB: 03524F54        L700            FCB 3,"ROT"
+08DF:                 ROT             
+08DF: BD04F9                          jsr DOLST
+08E2: 05D2061705B206                  FDB     TOR,SWAP,RFROM,SWAP,EXIT
+08EC:                 
+08EC:                 ;   2DROP       ( w w -- )
+08EC:                 ;               Discard two items on stack.
+08EC:                 
+08EC: 08F608DB                        FDB DDROP,L700
+08F0: 053244524F50    L710            FCB 5,"2DROP"
+08F6:                 DDROP           
+08F6: BD04F9                          jsr DOLST
+08F9: 05FC05FC0558                    FDB     DROP,DROP,EXIT
+08FF:                 
+08FF:                 ;   2DUP        ( w1 w2 -- w1 w2 w1 w2 )
+08FF:                 ;               Duplicate top two items.
+08FF:                                 
+08FF: 090808F0                        FDB DDUP,L710
+0903: 0432445550      L720            FCB 4,"2DUP"
+0908:                 DDUP            
+0908: BD04F9                          jsr DOLST
+090B: 062A062A0558                    FDB     OVER,OVER,EXIT
+0911:                 
+0911:                 ;   LSHIFT      ( w n -- w )
+0911:                 ;               Shift word left n times.
+0911: 091C0903                        FDB LSHIFT,L720
+0915: 064C5348494654  L721            FCB 6,"LSHIFT"
+091C: AEE1            LSHIFT          ldx ,s++        ;shift count
+091E: 270A                            beq LSHIFT2
+0920: ECE4                            ldd ,s          ;value to shift
+0922: 58              LSHIFT1         aslb            ;low
+0923: 49                              rola            ;high
+0924: 301F                            leax -1,x       ;count down
+0926: 26FA                            bne LSHIFT1
+0928: EDE4                            std ,s
+092A:                 LSHIFT2
+092A: 3780                            pulu pc
+092C:                 
+092C:                 ;   RSHIFT      ( w n -- w )
+092C:                 ;               Shift word right n times.
+092C: 09370915                        FDB RSHIFT,L721
+0930: 06525348494654  L721A           FCB 6,"RSHIFT"
+0937: AEE1            RSHIFT          ldx ,s++        ;shift count
+0939: 270A                            beq RSHIFT2
+093B: ECE4                            ldd ,s          ;value to shift
+093D: 44              RSHIFT1         lsra            ;high
+093E: 56                              rorb            ;low
+093F: 301F                            leax -1,x       ;count down
+0941: 26FA                            bne RSHIFT1
+0943: EDE4                            std ,s
+0945:                 RSHIFT2
+0945: 3780                            pulu pc
+0947:                 
+0947:                 ;   ><          ( w -- w )
+0947:                 ;               swap high and low byte
+0947: 094E0930                        FDB SWAPHL,L721A
+094B: 023E3C          L722            FCB 2,"><"
+094E: E6E4            SWAPHL          ldb ,s          ;high -> D low
+0950: A661                            lda 1,s         ;low -> D high
+0952: EDE4                            std ,s
+0954: 3780                            pulu pc
+0956:                 
+0956:                 ;   256/                ( w -- w )
+0956:                 ;               multiply with 256 (shift left 8 times)
+0956: 095F094B                        FDB SLASH256,L722
+095A: 043235362F      L723            FCB 4,"256/"
+095F: E6E4            SLASH256        ldb ,s          ;high -> D low
+0961: 4F                              clra            ;D high = 0
+0962: EDE4                            std ,s
+0964: 3780                            pulu pc
+0966:                 
+0966:                 ;   256*                ( w -- w )
+0966:                 ;               multiply with 256 (shift left 8 times)
+0966: 096F095A                        FDB STAR256,L723
+096A: 043235362A      L724            FCB 4,"256*"
+096F: A661            STAR256         lda 1,s         ;low -> D high
+0971: 5F                              clrb            ;D low = 0
+0972: EDE4                            std ,s
+0974: 3780                            pulu pc
+0976:                 
+0976:                 ;   1+          ( w -- w )
+0976:                 ;               Shortcut, quick add 1
+0976: 097D096A                        FDB PLUS1,L724
+097A: 02312B          L725            FCB 2,"1+"
+097D: ECE4            PLUS1           ldd ,s
+097F: C30001                          addd #1
+0982: EDE4                            std ,s
+0984: 3780                            pulu pc
+0986:                 
+0986:                 ;   -+          ( w -- w )
+0986:                 ;               Shortcut, quick subtract 1
+0986: 098D097A                        FDB MINUS1,L725
+098A: 02312D          L726            FCB 2,"1-"
+098D: ECE4            MINUS1          ldd ,s
+098F: 830001                          subd #1
+0992: EDE4                            std ,s
+0994: 3780                            pulu pc
+0996:                 
+0996:                 ;   2*          ( w -- w )
+0996:                 ;               multiply by 2 using shift operation
+0996: 099D098A                        FDB TWOSTAR,L726
+099A: 02322A          L727            FCB 2,"2*"
+099D: 6861            TWOSTAR         asl 1,s         ;low
+099F: 6960                            rol 0,s         ;high
+09A1: 3780                            pulu pc
+09A3:                 
+09A3:                 ;   2/          ( w -- w )
+09A3:                 ;               divide by 2 using shift operation
+09A3: 09AA099A                        FDB TWOSLASH,L727
+09A7: 02322F          L728            FCB 2,"2/"
+09AA: 6760            TWOSLASH        asr 0,s         ;high
+09AC: 6661                            ror 1,s         ;low
+09AE: 3780                            pulu pc
+09B0:                 
+09B0:                 ;   +           ( w w -- sum )
+09B0:                 ;               Add top two items.
+09B0:                 
+09B0: 09B609A7                        FDB PLUS,L728
+09B4: 012B            L730            FCB 1,"+"
+09B6:                 PLUS            
+09B6: ECE1                            ldd ,s++
+09B8: E3E4                            addd ,s
+09BA: EDE4                            std ,s
+09BC: 3780                            pulu pc
+09BE:                 ;;; HL with UPLUS!? Too inefficient ...
+09BE:                 ;;;             jsr DOLST
+09BE:                 ;;;             FDB     UPLUS,DROP,EXIT
+09BE:                 
+09BE:                 ;   NOT         ( w -- w )
+09BE:                 ;               One's complement of tos.
+09BE:                 
+09BE: 09C609B4                        FDB INVER,L730
+09C2: 034E4F54        L740            FCB 3,"NOT"
+09C6:                 INVER
+09C6:                 ;;;; fastest ... (13T)
+09C6: 63E4                            com ,s  ;               6T
+09C8: 6361                            com 1,s ;               7T
+09CA: 3780                            pulu pc
+09CC:                 ;;;; alternative ...  (14T)
+09CC: ECE4                            ldd ,s  ;TOS            5T
+09CE: 43                              coma    ;               2T
+09CF: 53                              comb    ;               2T      
+09D0: EDE4                            std ,s  ;               5T
+09D2: 3780                            pulu pc
+09D4:                 ;;; slow HL ...
+09D4:                 ;;;             jsr DOLST
+09D4:                 ;;;             FDB     DOLIT,-1,XORR,EXIT
+09D4:                 
+09D4:                 ;   NEGATE      ( n -- -n )
+09D4:                 ;               Two's complement of tos.
+09D4:                 
+09D4: 09DF09C2                        FDB NEGAT,L740
+09D8: 064E4547415445  L750            FCB 6,"NEGATE"
+09DF:                 NEGAT           
+09DF:                 ;;;; fastest? .... (3+6+5 = 14T)
+09DF: CC0000                          ldd #0          ;                       3T
+09E2: A3E4                            subd ,s         ;                       6T
+09E4: EDE4                            std ,s          ;                       5T
+09E6: 3780                            pulu pc
+09E8:                 ;;;; alternate ... (7+3+6 = 16T)
+09E8: 6061                            neg 1,s         ; high                  7T
+09EA: 2604                            bne NEGAT1      ;                       3T
+09EC: 60E4                            neg ,s          ; low with 1+ carry     6T
+09EE: 3780                            pulu pc
+09F0: 63E4            NEGAT1          com ,s          ; low, no 1+ carry      6T
+09F2: 3780                            pulu pc
+09F4:                 ;;;; slow HL ...
+09F4:                 ;;;;            jsr DOLST
+09F4:                 ;;;;            FDB     INVER,PLUS1,EXIT
+09F4:                 
+09F4:                 ;   DNEGATE     ( d -- -d )
+09F4:                 ;               Two's complement of top double.
+09F4:                 
+09F4: 0A0009D8                        FDB DNEGA,L750
+09F8: 07444E45474154  L760            FCB 7,"DNEGATE"
+0A00:                 DNEGA
+0A00: CC0000                          ldd #0
+0A03: A362                            subd 2,s        ; low word
+0A05: ED62                            std 2,s
+0A07: CC0000                          ldd #0
+0A0A: E261                            sbcb 1,s        ; high word low byte
+0A0C: A2E4                            sbca ,s         ; high word high byte
+0A0E: EDE4                            std ,s
+0A10: 3780                            pulu pc
+0A12:                 ;;;; slow HL ...
+0A12:                 ;;;;            jsr DOLST
+0A12:                 ;;;;            FDB     INVER,TOR,INVER
+0A12:                 ;;;;            FDB     DOLIT,1,UPLUS
+0A12:                 ;;;;            FDB     RFROM,PLUS,EXIT
+0A12:                 
+0A12:                 ;   -           ( n1 n2 -- n1-n2 )
+0A12:                 ;               Subtraction.
+0A12:                 
+0A12: 0A1809F8                        FDB SUBB,L760
+0A16: 012D            L770            FCB 1,"-"
+0A18: EC62            SUBB            ldd 2,s
+0A1A: A3E1                            subd ,s++
+0A1C: EDE4                            std ,s
+0A1E: 3780                            pulu pc
+0A20:                 ;;; slow HL ...
+0A20:                 ;;;             jsr DOLST
+0A20:                 ;;;             FDB     NEGAT,PLUS,EXIT
+0A20:                 
+0A20:                 ;   ABS         ( n -- n )
+0A20:                 ;               Return the absolute value of n.
+0A20:                 
+0A20: 0A280A16                        FDB ABSS,L770
+0A24: 03414253        L780            FCB 3,"ABS"
+0A28: BD04F9          ABSS            jsr DOLST
+0A2B: 06080637                        FDB     DUPP,ZLESS
+0A2F: 05270A35                        FDB     QBRAN,ABS1
+0A33: 09DF                            FDB     NEGAT
+0A35: 0558            ABS1            FDB     EXIT
+0A37:                 
+0A37:                 ;   =           ( w w -- t )
+0A37:                 ;               Return true if top two are equal.
+0A37:                 
+0A37: 0A3D0A24                        FDB EQUAL,L780
+0A3B: 013D            L790            FCB 1,"="
+0A3D:                 EQUAL
+0A3D: 8EFFFF                          ldx #TRUEE
+0A40: 3506                            puls d          ; first value
+0A42: 10A3E4                          cmpd ,s         ; compare to 2nd value
+0A45: 2703                            beq EQUAL1      ; equal -> true
+0A47: 8E0000                          ldx #0          ; false (leax 1,x save 1 byte, but is slower)
+0A4A: AFE4            EQUAL1          stx ,s
+0A4C: 3780                            pulu pc
+0A4E:                 ;;;; slow HL ...
+0A4E:                 ;;;;            jsr DOLST
+0A4E:                 ;;;;            FDB     XORR
+0A4E:                 ;;;;            FDB     QBRAN,EQU1
+0A4E:                 ;;;;            FDB     DOLIT,0,EXIT
+0A4E:                 ;;;;EQU1:               FDB     DOLIT,TRUEE,EXIT
+0A4E:                 
+0A4E:                 ;   U<          ( u1 u2 -- t )
+0A4E:                 ;               Unsigned compare of top two items.
+0A4E:                 
+0A4E: 0A550A3B                        FDB ULESS,L790
+0A52: 02553C          L800            FCB 2,"U<"
+0A55:                 ULESS
+0A55: 8EFFFF                          ldx #TRUEE      ; true
+0A58: 3506                            puls d          ; u2
+0A5A: 10A3E4                          cmpd ,s         ; u2 - u1
+0A5D: 2203                            bhi ULES1       ; unsigned: u2 higher u1
+0A5F: 8E0000                          ldx #0          ; false
+0A62: AFE4            ULES1           stx ,s          ; replace TOS with result
+0A64: 3780                            pulu pc
+0A66:                 ;;;; slow HL ...
+0A66:                 ;;;;            jsr DOLST
+0A66:                 ;;;;            FDB     DDUP,XORR,ZLESS
+0A66:                 ;;;;            FDB     QBRAN,ULES1
+0A66:                 ;;;;            FDB     SWAP,DROP,ZLESS,EXIT
+0A66:                 ;;;;ULES1:              FDB     SUBB,ZLESS,EXIT
+0A66:                 
+0A66:                 ;   <           ( n1 n2 -- t )
+0A66:                 ;               Signed compare of top two items.
+0A66:                 
+0A66: 0A6C0A52                        FDB LESS,L800
+0A6A: 013C            L810            FCB 1,"<"
+0A6C:                 LESS
+0A6C: 8EFFFF                          ldx #TRUEE      ; true
+0A6F: 3506                            puls d          ; n2
+0A71: 10A3E4                          cmpd ,s         ; n2 - n1
+0A74: 2E03                            bgt LESS1       ; signed: n2 greater than n1
+0A76: 8E0000                          ldx #0          ; false
+0A79: AFE4            LESS1           stx ,s          ; replace TOS with result
+0A7B: 3780                            pulu pc
+0A7D:                                 
+0A7D:                 ;;;; slow HL ...
+0A7D:                 ;;;;            jsr DOLST
+0A7D:                 ;;;;            FDB     DDUP,XORR,ZLESS
+0A7D:                 ;;;;            FDB     QBRAN,LESS1
+0A7D:                 ;;;;            FDB     DROP,ZLESS,EXIT
+0A7D:                 ;;;;LESS1:              FDB     SUBB,ZLESS,EXIT
+0A7D:                 
+0A7D:                 ;   MAX         ( n n -- n )
+0A7D:                 ;               Return the greater of two top stack items.
+0A7D:                 
+0A7D: 0A850A6A                        FDB MAX,L810
+0A81: 034D4158        L820            FCB 3,"MAX"
+0A85: BD04F9          MAX             jsr DOLST
+0A88: 09080A6C                        FDB     DDUP,LESS
+0A8C: 05270A92                        FDB     QBRAN,MAX1
+0A90: 0617                            FDB     SWAP
+0A92: 05FC0558        MAX1            FDB     DROP,EXIT
+0A96:                 
+0A96:                 ;   MIN         ( n n -- n )
+0A96:                 ;               Return the smaller of top two stack items.
+0A96:                 
+0A96: 0A9E0A81                        FDB MIN,L820
+0A9A: 034D494E        L830            FCB 3,"MIN"
+0A9E: BD04F9          MIN             jsr DOLST
+0AA1: 090806170A6C                    FDB     DDUP,SWAP,LESS
+0AA7: 05270AAD                        FDB     QBRAN,MIN1
+0AAB: 0617                            FDB     SWAP
+0AAD: 05FC0558        MIN1            FDB     DROP,EXIT
+0AB1:                 
+0AB1:                 ;   WITHIN      ( u ul uh -- t )
+0AB1:                 ;               Return true if u is within the range of ul and uh. ( ul <= u < uh )
+0AB1:                 
+0AB1: 0ABC0A9A                        FDB WITHI,L830
+0AB5: 0657495448494E  L840            FCB 6,"WITHIN"
+0ABC: BD04F9          WITHI           jsr DOLST
+0ABF: 062A0A1805D2                    FDB     OVER,SUBB,TOR
+0AC5: 0A1805B20A5505                  FDB     SUBB,RFROM,ULESS,EXIT
+0ACD:                 
+0ACD:                 ;; Divide
+0ACD:                 
+0ACD:                 ;   U/          ( udl udh un -- ur uq )
+0ACD:                 ;               Unsigned divide of a double by a single. Return mod and quotient.
+0ACD:                 ;
+0ACD:                 ; Special cases:
+0ACD:                 ;       1. overflow: quotient overflow if dividend is to great (remainder = divisor),
+0ACD:                 ;               remainder is set to $FFFF -> special handling.
+0ACD:                 ;               This is checked also right before the main loop.
+0ACD:                 ;       2. underflow: divisor does not fit into dividend -> remainder
+0ACD:                 ;               get the value of the dividend -> automatically covered.
+0ACD:                 ;
+0ACD:                 ;   overflow:           quotient = $FFFF, remainder = divisor
+0ACD:                 ;   underflow:          quotient = $0000, remainder = dividend low
+0ACD:                 ;   division by zero:   quotient = $FFFF, remainder = $0000
+0ACD:                 ;
+0ACD:                 ; Testvalues:
+0ACD:                 ;
+0ACD:                 ; DIVH  DIVL    DVSR    QUOT    REM     comment
+0ACD:                 ;
+0ACD:                 ; 0100  0000    FFFF    0100    0100    maximum divisor
+0ACD:                 ; 0000  0001    8000    0000    0001    underflow (REM = DIVL)
+0ACD:                 ; 0000  5800    3000    0001    1800    normal divsion
+0ACD:                 ; 5800  0000    3000    FFFF    3000    overflow
+0ACD:                 ; 0000  0001    0000    FFFF    0000    overflow (division by zero)
+0ACD:                 
+0ACD: 0AD40AB5                        FDB USLASH,L840
+0AD1: 02552F          L845            FCB 2,"U/"
+0AD4:                 
+0AD4:                 USLASH
+0AD4: 8E0010                          ldx #16
+0AD7: EC62                            ldd 2,s         ; udh
+0AD9: 10A3E4                          cmpd ,s         ; dividend to great?
+0ADC: 2424                            bhs UMMODOV     ; quotient overflow!
+0ADE: 6865                            asl 5,s         ; udl low
+0AE0: 6964                            rol 4,s         ; udl high
+0AE2:                 
+0AE2: 59              UMMOD1          rolb            ; got one bit from udl
+0AE3: 49                              rola
+0AE4: 2509                            bcs UMMOD2      ; bit 16 means always greater as divisor
+0AE6: 10A3E4                          cmpd ,s         ; divide by un
+0AE9: 2404                            bhs UMMOD2      ; higher or same as divisor?
+0AEB: 1CFE                            andcc #$fe      ; clc - clear carry flag
+0AED: 2004                            bra UMMOD3
+0AEF: A3E4            UMMOD2          subd ,s
+0AF1: 1A01                            orcc #$01       ; sec - set carry flag
+0AF3: 6965            UMMOD3          rol 5,s         ; udl, quotient shifted in
+0AF5: 6964                            rol 4,s
+0AF7: 301F                            leax -1,x
+0AF9: 26E7                            bne UMMOD1
+0AFB:                 
+0AFB: AE64                            ldx 4,s         ; quotient
+0AFD: 10A3E4                          cmpd ,s         ; remainder >= divisor -> overflow
+0B00: 2505                            blo UMMOD4
+0B02:                 UMMODOV
+0B02: ECE4                            ldd ,s          ; remainder set to divisor
+0B04: 8EFFFF                          ldx #$FFFF      ; quotient = FFFF (-1) marks overflow
+0B07:                                                 ; (case 1)
+0B07:                 UMMOD4         
+0B07: 3262                            leas 2,s        ; un (divisor thrown away)
+0B09: AFE4                            stx ,s          ; quotient to TOS
+0B0B: ED62                            std 2,s         ; remainder 2nd
+0B0D:                 
+0B0D: 3780                            pulu pc         ; NEXT
+0B0F:                 
+0B0F:                 
+0B0F:                 ;   UM/MOD      ( udl udh un -- ur uq )
+0B0F:                 ;               Unsigned divide of a double by a single. Return mod and quotient.
+0B0F:                 
+0B0F: 0B1A0AD1                        FDB UMMOD,L845
+0B13: 06554D2F4D4F44  L850            FCB 6,"UM/MOD"
+0B1A:                 UMMOD
+0B1A: 7E0AD4                          jmp USLASH
+0B1D:                 ;;;; slow HL ...
+0B1D: BD04F9                          jsr DOLST
+0B20: 09080A55                        FDB     DDUP,ULESS
+0B24: 05270B70                        FDB     QBRAN,UMM4
+0B28: 09DF04D6000F05                  FDB     NEGAT,DOLIT,15,TOR
+0B30: 05D2060806BB    UMM1            FDB     TOR,DUPP,UPLUS
+0B36: 05D205D2060806                  FDB     TOR,TOR,DUPP,UPLUS
+0B3E: 05B209B60608                    FDB     RFROM,PLUS,DUPP
+0B44: 05B205C5061705                  FDB     RFROM,RAT,SWAP,TOR
+0B4C: 06BB05B2066E                    FDB     UPLUS,RFROM,ORR
+0B52: 05270B62                        FDB     QBRAN,UMM2
+0B56: 05D205FC097D05                  FDB     TOR,DROP,PLUS1,RFROM
+0B5E: 053E0B64                        FDB     BRAN,UMM3
+0B62: 05FC            UMM2            FDB     DROP
+0B64: 05B2            UMM3            FDB     RFROM
+0B66: 05080B30                        FDB     DONXT,UMM1
+0B6A: 05FC06170558                    FDB     DROP,SWAP,EXIT
+0B70: 05FC08F6        UMM4            FDB     DROP,DDROP
+0B74: 04D6FFFF060805                  FDB     DOLIT,-1,DUPP,EXIT
+0B7C:                 
+0B7C:                 ;   M/MOD       ( d n -- r q )
+0B7C:                 ;               Signed floored divide of double by single. Return mod and quotient.
+0B7C:                 
+0B7C: 0B860B13                        FDB MSMOD,L850
+0B80: 054D2F4D4F44    L860            FCB 5,"M/MOD"
+0B86:                 MSMOD
+0B86: BD04F9                          jsr DOLST
+0B89: 06080637060805                  FDB     DUPP,ZLESS,DUPP,TOR
+0B91: 05270B9D                        FDB     QBRAN,MMOD1
+0B95: 09DF05D20A0005                  FDB     NEGAT,TOR,DNEGA,RFROM
+0B9D: 05D206080637    MMOD1           FDB     TOR,DUPP,ZLESS
+0BA3: 05270BAB                        FDB     QBRAN,MMOD2
+0BA7: 05C509B6                        FDB     RAT,PLUS
+0BAB: 05B20B1A05B2    MMOD2           FDB     RFROM,UMMOD,RFROM
+0BB1: 05270BBB                        FDB     QBRAN,MMOD3
+0BB5: 061709DF0617                    FDB     SWAP,NEGAT,SWAP
+0BBB: 0558            MMOD3           FDB     EXIT
+0BBD:                 
+0BBD:                 ;   /MOD        ( n n -- r q )
+0BBD:                 ;               Signed divide. Return mod and quotient.
+0BBD:                 
+0BBD: 0BC60B80                        FDB SLMOD,L860
+0BC1: 042F4D4F44      L870            FCB 4,"/MOD"
+0BC6: BD04F9          SLMOD           jsr DOLST
+0BC9: 062A063706170B                  FDB     OVER,ZLESS,SWAP,MSMOD,EXIT
+0BD3:                 
+0BD3:                 ;   MOD         ( n n -- r )
+0BD3:                 ;               Signed divide. Return mod only.
+0BD3:                 
+0BD3: 0BDB0BC1                        FDB MODD,L870
+0BD7: 034D4F44        L880            FCB 3,"MOD"
+0BDB: BD04F9          MODD            jsr DOLST
+0BDE: 0BC605FC0558                    FDB     SLMOD,DROP,EXIT
+0BE4:                 
+0BE4:                 ;   /           ( n n -- q )
+0BE4:                 ;               Signed divide. Return quotient only.
+0BE4:                 
+0BE4: 0BEA0BD7                        FDB SLASH,L880
+0BE8: 012F            L890            FCB 1,"/"
+0BEA:                 SLASH
+0BEA: BD04F9                          jsr DOLST
+0BED: 0BC6061705FC05                  FDB     SLMOD,SWAP,DROP,EXIT
+0BF5:                 
+0BF5:                 ;; Multiply
+0BF5:                 
+0BF5:                 ;   UM*         ( u u -- ud )
+0BF5:                 ;               Unsigned multiply. Return double product.
+0BF5:                 
+0BF5: 0BFD0BE8                        FDB UMSTA,L890
+0BF9: 03554D2A        L900            FCB 3,"UM*"
+0BFD:                 UMSTA
+0BFD: 8E0011                          ldx #17         ; 16 adds and 17 shifts ...
+0C00: 4F                              clra            ; result high word
+0C01: 5F                              clrb
+0C02: 2006                            bra UUMSTA3
+0C04: 2402            UUMSTA1         bcc UUMSTA2
+0C06: E3E4                            addd ,s
+0C08: 46              UUMSTA2         rora            ; high, result high word
+0C09: 56                              rorb            ; low, result high word
+0C0A: 6662            UUMSTA3         ror 2,s         ; shift multiplier high, result low word
+0C0C: 6663                            ror 3,s         ; shift multiplier low, result low word
+0C0E: 301F                            leax -1,x
+0C10: 26F2                            bne UUMSTA1
+0C12: EDE4                            std ,s
+0C14: 3780                            pulu pc
+0C16:                 ;;;; slow HL ...
+0C16:                 ;;;;            jsr DOLST
+0C16:                 ;;;;            FDB     DOLIT,0,SWAP,DOLIT,15,TOR
+0C16:                 ;;;;UMST1:              FDB     DUPP,UPLUS,TOR,TOR
+0C16:                 ;;;;            FDB     DUPP,UPLUS,RFROM,PLUS,RFROM
+0C16:                 ;;;;            FDB     QBRAN,UMST2
+0C16:                 ;;;;            FDB     TOR,OVER,UPLUS,RFROM,PLUS
+0C16:                 ;;;;UMST2:              FDB     DONXT,UMST1
+0C16:                 ;;;;            FDB     ROT,DROP,EXIT
+0C16:                 
+0C16:                 ;   _UM*                ( u u -- ud )
+0C16:                 ;               Unsigned multiply. Return double product.
+0C16:                 
+0C16: 0C1F0BF9                        FDB UUMSTA,L900
+0C1A: 045F554D2A      L900A           FCB 4,"_UM*"
+0C1F:                 UUMSTA
+0C1F: BD04F9                          jsr DOLST
+0C22: 04D60000061704                  FDB     DOLIT,0,SWAP,DOLIT,15,TOR
+0C2E: 060806BB05D205  UMST1           FDB     DUPP,UPLUS,TOR,TOR
+0C36: 060806BB05B209                  FDB     DUPP,UPLUS,RFROM,PLUS,RFROM
+0C40: 05270C4E                        FDB     QBRAN,UMST2
+0C44: 05D2062A06BB05                  FDB     TOR,OVER,UPLUS,RFROM,PLUS
+0C4E: 05080C2E        UMST2           FDB     DONXT,UMST1
+0C52: 08DF05FC0558                    FDB     ROT,DROP,EXIT
+0C58:                 
+0C58:                 ;   *           ( n n -- n )
+0C58:                 ;               Signed multiply. Return single product.
+0C58:                 ;               XXX Not really signed, -200 -200 * -> -25536
+0C58:                 
+0C58: 0C5E0C1A                        FDB STAR,L900A
+0C5C: 012A            L910            FCB 1,"*"
+0C5E:                 STAR
+0C5E: BD04F9                          jsr DOLST
+0C61: 0C6E05FC0558                    FDB     MSTAR,DROP,EXIT
+0C67:                 
+0C67:                 ;   M*          ( n n -- d )
+0C67:                 ;               Signed multiply. Return double product.
+0C67:                 
+0C67: 0C6E0C5C                        FDB MSTAR,L910
+0C6B: 024D2A          L920            FCB 2,"M*"
+0C6E:                 MSTAR
+0C6E: BD04F9                          jsr DOLST
+0C71: 09080680063705                  FDB     DDUP,XORR,ZLESS,TOR
+0C79: 0A2806170A280B                  FDB     ABSS,SWAP,ABSS,UMSTA
+0C81: 05B2                            FDB     RFROM
+0C83: 05270C89                        FDB     QBRAN,MSTA1
+0C87: 0A00                            FDB     DNEGA
+0C89: 0558            MSTA1           FDB     EXIT
+0C8B:                 
+0C8B:                 ;   */MOD       ( n1 n2 n3 -- r q )
+0C8B:                 ;               Multiply n1 and n2, then divide by n3. Return mod and quotient.
+0C8B:                 
+0C8B: 0C950C6B                        FDB SSMOD,L920
+0C8F: 052A2F4D4F44    L930            FCB 5,"*/MOD"
+0C95: BD04F9          SSMOD           jsr DOLST
+0C98: 05D20C6E05B20B                  FDB     TOR,MSTAR,RFROM,MSMOD,EXIT
+0CA2:                 
+0CA2:                 ;   */          ( n1 n2 n3 -- q )
+0CA2:                 ;               Multiply n1 by n2, then divide by n3. Return quotient only.
+0CA2:                 
+0CA2: 0CA90C8F                        FDB STASL,L930
+0CA6: 022A2F          L940            FCB 2,"*/"
+0CA9: BD04F9          STASL           jsr DOLST
+0CAC: 0C95061705FC05                  FDB     SSMOD,SWAP,DROP,EXIT
+0CB4:                 
+0CB4:                 ;; Miscellaneous
+0CB4:                 
+0CB4:                 ;   CELL+       ( a -- a )
+0CB4:                 ;               Add cell size in byte to address.
+0CB4:                 
+0CB4: 0CBE0CA6                        FDB CELLP,L940
+0CB8: 0543454C4C2B    L950            FCB 5,"CELL+"
+0CBE: BD04F9          CELLP           jsr DOLST
+0CC1: 04E7                            FDB     DOCLIT
+0CC3: 02                              FCB     CELLL
+0CC4: 09B60558                        FDB     PLUS,EXIT
+0CC8:                 
+0CC8:                 ;   CELL-       ( a -- a )
+0CC8:                 ;               Subtract cell size in byte from address.
+0CC8:                 
+0CC8: 0CD20CB8                        FDB CELLM,L950
+0CCC: 0543454C4C2D    L960            FCB 5,"CELL-"
+0CD2: BD04F9          CELLM           jsr DOLST
+0CD5: 04E7                            FDB     DOCLIT
+0CD7: FE                              FCB     0-CELLL
+0CD8: 09B60558                        FDB     PLUS,EXIT
+0CDC:                 
+0CDC:                 ;   CELLS       ( n -- n )
+0CDC:                 ;               Multiply tos by cell size in bytes.
+0CDC:                 
+0CDC: 0CE60CCC                        FDB CELLS,L960
+0CE0: 0543454C4C53    L970            FCB 5,"CELLS"
+0CE6: BD04F9          CELLS           jsr DOLST
+0CE9: 04E7                            FDB     DOCLIT
+0CEB: 02                              FCB     CELLL
+0CEC: 0C5E0558                        FDB     STAR,EXIT
+0CF0:                 
+0CF0:                 ;   ALIGNED     ( b -- a )
+0CF0:                 ;               Align address to the cell boundary.
+0CF0:                 
+0CF0: 0CFC0CE0                        FDB ALGND,L970
+0CF4: 07414C49474E45  L975            FCB 7,"ALIGNED"
+0CFC: BD04F9          ALGND           jsr DOLST
+0CFF: 0558                            FDB EXIT
+0D01:                 
+0D01:                 ;   BL          ( -- 32 )
+0D01:                 ;               Return 32, the blank character.
+0D01:                 
+0D01: 0D080CF4                        FDB BLANK,L975
+0D05: 02424C          L980            FCB 2,"BL"
+0D08:                 BLANK
+0D08: BD06D6                          jsr DOCONST
+0D0B: 0020                            FDB ' '
+0D0D:                 ;;;             jsr DOLST
+0D0D:                 ;;;             FDB     DOLIT,' ',EXIT
+0D0D:                 
+0D0D:                 ;   >CHAR       ( c -- c )
+0D0D:                 ;               Filter non-printing characters.
+0D0D:                 
+0D0D: 0D170D05                        FDB TCHAR,L980
+0D11: 053E43484152    L990            FCB 5,">CHAR"
+0D17: BD04F9          TCHAR           jsr DOLST
+0D1A: 04D6007F065D06                  FDB     DOLIT,$7F,ANDD,DUPP     ;mask msb
+0D22: 04E7                            FDB     DOCLIT
+0D24: 7F                              FCB     127
+0D25: 0D080ABC                        FDB     BLANK,WITHI     ;check for printable
+0D29: 05270D33                        FDB     QBRAN,TCHA1
+0D2D: 05FC04D6005F                    FDB     DROP,DOLIT,'_'          ;replace non-printables
+0D33: 0558            TCHA1           FDB     EXIT
+0D35:                 
+0D35:                 ;   DEPTH       ( -- n )
+0D35:                 ;               Return the depth of the data stack.
+0D35:                 
+0D35: 0D3F0D11                        FDB DEPTH,L990
+0D39: 054445505448    L1000           FCB 5,"DEPTH"
+0D3F: BD04F9          DEPTH           jsr DOLST
+0D42: 05E00753057006                  FDB     SPAT,SZERO,AT,SWAP,SUBB
+0D4C: 04E7                            FDB     DOCLIT
+0D4E: 02                              FCB     CELLL
+0D4F: 0BEA0558                        FDB     SLASH,EXIT
+0D53:                 
+0D53:                 ;   PICK        ( ... +n -- ... w )
+0D53:                 ;               Copy the nth stack item to tos.
+0D53:                 
+0D53: 0D5C0D39                        FDB PICK,L1000
+0D57: 045049434B      L1010           FCB 4,"PICK"
+0D5C:                 PICK            
+0D5C: ECE4                            ldd ,s
+0D5E: C30001                          addd #1         ; correct index
+0D61: 58                              aslb            ; CELLL* (ASSERT: CELLL=2!!!)
+0D62: 49                              rola
+0D63: AEEB                            ldx d,s         ; pick value
+0D65: AFE4                            stx ,s          ; replace TOP
+0D67: 3780                            pulu pc
+0D69:                 ;;;; slow HL ...
+0D69:                 ;;;;            jsr DOLST
+0D69:                 ;;;;            FDB     PLUS1,CELLS
+0D69:                 ;;;;            FDB     SPAT,PLUS,AT,EXIT
+0D69:                 
+0D69:                 
+0D69:                 ;   ROLL        ( ... +n -- ... w )
+0D69:                 ;               Copy the nth stack item to tos.
+0D69:                 
+0D69: 0D720D57                        FDB ROLL,L1010
+0D6D: 04524F4C4C      L1015           FCB 4,"ROLL"
+0D72:                 ROLL
+0D72:                 ;;;; XXX als Primitive!
+0D72:                 ;;;; slow HL ...
+0D72: BD04F9                          jsr DOLST
+0D75: 060806F8                        FDB     DUPP,TWO
+0D79: 0A6C05270D85                    FDB     LESS,QBRAN,ROL1
+0D7F: 05FC053E0D93                    FDB     DROP,BRAN,ROL2
+0D85: 061705D206ED    ROL1            FDB     SWAP,TOR,ONE
+0D8B: 0A18                            FDB     SUBB
+0D8D: 0D7205B20617                    FDB     ROLL,RFROM,SWAP
+0D93: 0558            ROL2            FDB     EXIT
+0D95:                 
+0D95:                 ;; Memory access
+0D95:                 
+0D95:                 ;   +!          ( n a -- )
+0D95:                 ;               Add n to the contents at address a.
+0D95:                 
+0D95: 0D9C0D6D                        FDB PSTOR,L1015
+0D99: 022B21          L1020           FCB 2,"+!"
+0D9C:                 PSTOR
+0D9C: 3510                            puls x          ; address
+0D9E: 3506                            puls d          ; value
+0DA0: E384                            addd ,x         ; add to value from address
+0DA2: ED84                            std ,x          ; store back
+0DA4: 3780                            pulu pc
+0DA6:                 
+0DA6:                 ;;;; XXX als Primitive!
+0DA6:                 ;;;; slow HL ...
+0DA6:                 ;;;;            jsr DOLST
+0DA6:                 ;;;;            FDB     SWAP,OVER,AT,PLUS
+0DA6:                 ;;;;            FDB     SWAP,STORE,EXIT
+0DA6:                 
+0DA6:                 ;   2!          ( d a -- )
+0DA6:                 ;               Store the double integer to address a.
+0DA6:                 
+0DA6: 0DAD0D99                        FDB DSTOR,L1020
+0DAA: 023221          L1030           FCB 2,"2!"
+0DAD:                 DSTOR
+0DAD:                 ;;;; XXX als Primitive!
+0DAD:                 ;;;; slow HL ...
+0DAD: BD04F9                          jsr DOLST
+0DB0: 0617062A0562                    FDB     SWAP,OVER,STORE
+0DB6: 0CBE05620558                    FDB     CELLP,STORE,EXIT
+0DBC:                 
+0DBC:                 ;   2@          ( a -- d )
+0DBC:                 ;               Fetch double integer from address a.
+0DBC:                 
+0DBC: 0DC30DAA                        FDB DAT,L1030
+0DC0: 023240          L1040           FCB 2,"2@"
+0DC3:                 DAT
+0DC3:                 ;;;; XXX als Primitive!
+0DC3:                 ;;;; slow HL ...
+0DC3: BD04F9                          jsr DOLST
+0DC6: 06080CBE0570                    FDB     DUPP,CELLP,AT
+0DCC: 061705700558                    FDB     SWAP,AT,EXIT
+0DD2:                 
+0DD2:                 ;   COUNT       ( b -- b +n )
+0DD2:                 ;               Return count byte of a string and add 1 to byte address.
+0DD2:                 
+0DD2: 0DDC0DC0                        FDB COUNT,L1040
+0DD6: 05434F554E54    L1050           FCB 5,"COUNT"
+0DDC: BD04F9          COUNT           jsr DOLST
+0DDF: 0608097D                        FDB     DUPP,PLUS1
+0DE3: 0617058C0558                    FDB     SWAP,CAT,EXIT
+0DE9:                 
+0DE9:                 ;   HERE        ( -- a )
+0DE9:                 ;               Return the top of the code dictionary.
+0DE9:                 
+0DE9: 0DF20DD6                        FDB HERE,L1050
+0DED: 0448455245      L1060           FCB 4,"HERE"
+0DF2: BD04F9          HERE            jsr DOLST
+0DF5: 087A05700558                    FDB     CP,AT,EXIT
+0DFB:                 
+0DFB:                 ;   PAD         ( -- a )
+0DFB:                 ;               Return the address of the text buffer above the code dictionary.
+0DFB:                 
+0DFB: 0E030DED                        FDB PAD,L1060
+0DFF: 03504144        L1070           FCB 3,"PAD"
+0E03: BD04F9          PAD             jsr DOLST
+0E06: 0DF204D6005009                  FDB     HERE,DOLIT,80,PLUS,EXIT
+0E10:                 
+0E10:                 ;   TIB         ( -- a )
+0E10:                 ;               Return the address of the terminal input buffer.
+0E10:                 
+0E10: 0E180DFF                        FDB TIB,L1070
+0E14: 03544942        L1080           FCB 3,"TIB"
+0E18: BD04F9          TIB             jsr DOLST
+0E1B: 08010CBE057005                  FDB     NTIB,CELLP,AT,EXIT
+0E23:                 
+0E23:                 ;   @EXECUTE    ( a -- )
+0E23:                 ;               Execute vector stored in address a.
+0E23:                 
+0E23: 0E300E14                        FDB ATEXE,L1080
+0E27: 08404558454355  L1090           FCB 8,"@EXECUTE"
+0E30: BD04F9          ATEXE           jsr DOLST
+0E33: 057008CA                        FDB     AT,QDUP                 ;?address or zero
+0E37: 05270E3D                        FDB     QBRAN,EXE1
+0E3B: 054E                            FDB     EXECU                   ;execute if non-zero
+0E3D: 0558            EXE1            FDB     EXIT                    ;do nothing if zero
+0E3F:                 
+0E3F:                 ;   CMOVE       ( b1 b2 u -- )
+0E3F:                 ;               Copy u bytes from b1 to b2.
+0E3F:                 
+0E3F: 0E490E27                        FDB CMOVE,L1090
+0E43: 05434D4F5645    L1100           FCB 5,"CMOVE"
+0E49:                 CMOVE
+0E49: 7E0E6C                          jmp CMOVEW
+0E4C: ECE4                            ldd ,s          ;count
+0E4E: 2718                            beq CMOVE3      ;zero -> leave
+0E50: 5D                              tstb            ;count low
+0E51: 2702                            beq CMOVE1
+0E53: 6CE4                            inc ,s          ;ajust high for to-0 decrementation
+0E55:                 CMOVE1
+0E55: AE62                            ldx 2,s         ;to addr
+0E57: EF62                            stu 2,s         ;save reg on stack
+0E59: EE64                            ldu 4,s         ;from addr
+0E5B: A6C0            CMOVE2          lda ,u+         ;from ->
+0E5D: A780                            sta ,x+         ;to     
+0E5F: 5A                              decb            ;low count
+0E60: 26F9                            bne CMOVE2
+0E62: 6AE4                            dec ,s          ;high count
+0E64: 26F5                            bne CMOVE2
+0E66: EE62                            ldu 2,s
+0E68: 3266            CMOVE3          leas 6,s        ;drop 3 parameters from stack
+0E6A: 3780                            pulu pc
+0E6C:                 ;;;;
+0E6C:                 ;;;; alternative, wordwise copy ...
+0E6C: ECE4            CMOVEW          ldd ,s          ; count
+0E6E: AE62                            ldx 2,s         ; destination
+0E70: 10AFE4                          sty ,s          ; save RP
+0E73: EF62                            stu 2,s         ; save IP
+0E75: 10AE64                          ldy 4,s         ; source
+0E78: 44                              lsra            ; divide by 2, count words
+0E79: 56                              rorb            ;
+0E7A: 3401                            pshs cc
+0E7C: 2701                            beq CMOVEW1     ; byte decrement correction
+0E7E: 4C                              inca            ; byte decrement high byte correction
+0E7F: 830000          CMOVEW1         subd #0         ; word count zero (=65536)?
+0E82: 270A                            beq CMOVEW3
+0E84: EEA1            CMOVEW2         ldu ,y++        ; source
+0E86: EF81                            stu ,x++        ; destination
+0E88: 5A                              decb            ; count low
+0E89: 26F9                            bne CMOVEW2
+0E8B: 4A                              deca            ; count high (count to 0 corrected)
+0E8C: 26F6                            bne CMOVEW2
+0E8E: 3501            CMOVEW3         puls CC         ; check if odd count?
+0E90: 2404                            bcc CMOVEW4
+0E92: A6A4                            lda ,y
+0E94: A784                            sta ,x
+0E96: 3560            CMOVEW4         puls y,u        ; y first
+0E98: 3262                            leas 2,s        ; drop 3rd parameter
+0E9A: 3780                            pulu pc         ; next
+0E9C:                 ;;;;
+0E9C:                 ;;;; slow HL ...
+0E9C:                 ;;;;            jsr DOLST
+0E9C:                 ;;;;            FDB     TOR
+0E9C:                 ;;;;            FDB     BRAN,CMOV2
+0E9C:                 ;;;;CMOV1:              FDB     TOR,DUPP,CAT
+0E9C:                 ;;;;            FDB     RAT,CSTOR
+0E9C:                 ;;;;            FDB     PLUS1
+0E9C:                 ;;;;            FDB     RFROM,PLUS1
+0E9C:                 ;;;;CMOV2:              FDB     DONXT,CMOV1
+0E9C:                 ;;;;            FDB     DDROP,EXIT
+0E9C:                 ;;;;
+0E9C:                 
+0E9C:                 ;   FILL        ( b u c -- )
+0E9C:                 ;               Fill u bytes of character c to area beginning at b.
+0E9C:                 
+0E9C: 0EA50E43                        FDB FILL,L1100
+0EA0: 0446494C4C      L1110           FCB 4,"FILL"
+0EA5:                 FILL
+0EA5: EC62                            ldd 2,s         ;count
+0EA7: 2712                            beq NFILL3      ;zero -> leave
+0EA9: 5D                              tstb            ;count low
+0EAA: 2702                            beq NFILL1
+0EAC: 6C62                            inc 2,s         ;ajust high for to-0 decrementation
+0EAE:                 NFILL1
+0EAE: AE64                            ldx 4,s         ;to addr
+0EB0: A661                            lda 1,s         ;fill byte, low byte from TOS
+0EB2:                 NFILL2          
+0EB2: A780                            sta ,x+         ;to     
+0EB4: 5A                              decb            ;low count
+0EB5: 26FB                            bne NFILL2
+0EB7: 6A62                            dec 2,s         ;high count
+0EB9: 26F7                            bne NFILL2
+0EBB: 3266            NFILL3          leas 6,s        ;drop 3 parameters from stack
+0EBD: 3780                            pulu pc
+0EBF:                 ;;;; slow HL ...
+0EBF:                 ;;;;            jsr DOLST
+0EBF:                 ;;;;            FDB     SWAP,TOR,SWAP
+0EBF:                 ;;;;            FDB     BRAN,FILL2
+0EBF:                 ;;;;FILL1:              FDB     DDUP,CSTOR,PLUS1
+0EBF:                 ;;;;FILL2:              FDB     DONXT,FILL1
+0EBF:                 ;;;;            FDB     DDROP,EXIT
+0EBF:                 
+0EBF:                 ;   -TRAILING   ( b u -- b u )
+0EBF:                 ;               Adjust the count to eliminate trailing white space.
+0EBF:                 
+0EBF: 0ECD0EA0                        FDB DTRAI,L1110
+0EC3: 092D545241494C  L1120           FCB 9,"-TRAILING"
+0ECD: BD04F9          DTRAI           jsr DOLST
+0ED0: 05D2                            FDB     TOR
+0ED2: 053E0EEC                        FDB     BRAN,DTRA2
+0ED6: 0D08062A05C509  DTRA1           FDB     BLANK,OVER,RAT,PLUS,CAT,LESS
+0EE2: 05270EEC                        FDB     QBRAN,DTRA2
+0EE6: 05B2097D0558                    FDB     RFROM,PLUS1,EXIT
+0EEC: 05080ED6        DTRA2           FDB     DONXT,DTRA1
+0EF0: 06E20558                        FDB     ZERO,EXIT
+0EF4:                 
+0EF4:                 ;   PACK$       ( b u a -- a )
+0EF4:                 ;               Build a counted string with u characters from b. Null fill.
+0EF4:                 
+0EF4: 0EFE0EC3                        FDB PACKS,L1120
+0EF8: 055041434B24    L1130           FCB 5,"PACK$"
+0EFE: BD04F9          PACKS           jsr DOLST
+0F01: 060805D2                        FDB     DUPP,TOR                ;strings only on cell boundary
+0F05: 0908057D                        FDB     DDUP,CSTOR
+0F09: 097D                            FDB     PLUS1                   ;count mod cell
+0F0B: 090809B6                        FDB     DDUP,PLUS
+0F0F: 06E20617057D                    FDB     ZERO,SWAP,CSTOR ;null fill cell
+0F15: 06170E4905B205                  FDB     SWAP,CMOVE,RFROM,EXIT   ;move string
+0F1D:                 
+0F1D:                 ;; Numeric output, single precision
+0F1D:                 
+0F1D:                 ;   DIGIT       ( u -- c )
+0F1D:                 ;               Convert digit u to a character.
+0F1D:                 
+0F1D: 0F270EF8                        FDB DIGIT,L1130
+0F21: 054449474954    L1140           FCB 5,"DIGIT"
+0F27: BD04F9          DIGIT           jsr DOLST
+0F2A: 04E7                            FDB     DOCLIT
+0F2C: 09                              FCB     9
+0F2D: 062A0A6C                        FDB     OVER,LESS
+0F31: 04E7                            FDB     DOCLIT
+0F33: 07                              FCB     7
+0F34: 065D09B6                        FDB     ANDD,PLUS
+0F38: 04D6003009B605                  FDB     DOLIT,'0',PLUS,EXIT
+0F40:                 
+0F40:                 ;   EXTRACT     ( n base -- n c )
+0F40:                 ;               Extract the least significant digit from n.
+0F40:                 
+0F40: 0F4C0F21                        FDB EXTRC,L1140
+0F44: 07455854524143  L1150           FCB 7,"EXTRACT"
+0F4C: BD04F9          EXTRC           jsr DOLST
+0F4F: 06E206170B1A                    FDB     ZERO,SWAP,UMMOD
+0F55: 06170F270558                    FDB     SWAP,DIGIT,EXIT
+0F5B:                 
+0F5B:                 ;   <#          ( -- )
+0F5B:                 ;               Initiate the numeric output process.
+0F5B:                 
+0F5B: 0F620F44                        FDB BDIGS,L1150
+0F5F: 023C23          L1160           FCB 2,"<#"
+0F62: BD04F9          BDIGS           jsr DOLST
+0F65: 0E03083B056205                  FDB     PAD,HLD,STORE,EXIT
+0F6D:                 
+0F6D:                 ;   HOLD        ( c -- )
+0F6D:                 ;               Insert a character into the numeric output string.
+0F6D:                 
+0F6D:                 
+0F6D: 0F760F5F                        FDB HOLD,L1160
+0F71: 04484F4C44      L1170           FCB 4,"HOLD"
+0F76: BD04F9          HOLD            jsr DOLST
+0F79: 083B0570098D                    FDB     HLD,AT,MINUS1
+0F7F: 0608083B056205                  FDB     DUPP,HLD,STORE,CSTOR,EXIT
+0F89:                 
+0F89:                 ;   #           ( u -- u )
+0F89:                 ;               Extract one digit from u and append the digit to output string.
+0F89:                 
+0F89: 0F8F0F71                        FDB DIG,L1170
+0F8D: 0123            L1180           FCB 1,"#"
+0F8F: BD04F9          DIG             jsr DOLST
+0F92: 07CB05700F4C0F                  FDB     BASE,AT,EXTRC,HOLD,EXIT
+0F9C:                 
+0F9C:                 ;   #S          ( u -- 0 )
+0F9C:                 ;               Convert u until all digits are added to the output string.
+0F9C:                 
+0F9C: 0FA30F8D                        FDB DIGS,L1180
+0FA0: 022353          L1190           FCB 2,"#S"
+0FA3: BD04F9          DIGS            jsr DOLST
+0FA6: 0F8F0608        DIGS1           FDB     DIG,DUPP
+0FAA: 05270FB2                        FDB     QBRAN,DIGS2
+0FAE: 053E0FA6                        FDB     BRAN,DIGS1
+0FB2: 0558            DIGS2           FDB     EXIT
+0FB4:                 
+0FB4:                 ;   SIGN        ( n -- )
+0FB4:                 ;               Add a minus sign to the numeric output string.
+0FB4:                 
+0FB4: 0FBD0FA0                        FDB SIGN,L1190
+0FB8: 045349474E      L1200           FCB 4,"SIGN"
+0FBD: BD04F9          SIGN            jsr DOLST
+0FC0: 0637                            FDB     ZLESS
+0FC2: 05270FCC                        FDB     QBRAN,SIGN1
+0FC6: 04D6002D0F76                    FDB     DOLIT,'-',HOLD
+0FCC: 0558            SIGN1           FDB     EXIT
+0FCE:                 
+0FCE:                 ;   #>          ( w -- b u )
+0FCE:                 ;               Prepare the output string to be TYPE'd.
+0FCE:                 
+0FCE: 0FD50FB8                        FDB EDIGS,L1200
+0FD2: 02233E          L1210           FCB 2,"#>"
+0FD5: BD04F9          EDIGS           jsr DOLST
+0FD8: 05FC083B0570                    FDB     DROP,HLD,AT
+0FDE: 0E03062A0A1805                  FDB     PAD,OVER,SUBB,EXIT
+0FE6:                 
+0FE6:                 ;   str         ( w -- b u )
+0FE6:                 ;               Convert a signed integer to a numeric string.
+0FE6:                 
+0FE6: 0FEE0FD2                        FDB STR,L1210
+0FEA: 03737472        L1220           FCB 3,"str"
+0FEE: BD04F9          STR             jsr DOLST
+0FF1: 060805D20A28                    FDB     DUPP,TOR,ABSS
+0FF7: 0F620FA305B2                    FDB     BDIGS,DIGS,RFROM
+0FFD: 0FBD0FD50558                    FDB     SIGN,EDIGS,EXIT
+1003:                 
+1003:                 ;   HEX         ( -- )
+1003:                 ;               Use radix 16 as base for numeric conversions.
+1003:                 
+1003: 100B0FEA                        FDB HEX,L1220
+1007: 03484558        L1230           FCB 3,"HEX"
+100B: BD04F9          HEX             jsr DOLST
+100E: 04E7                            FDB     DOCLIT
+1010: 10                              FCB     16
+1011: 07CB05620558                    FDB     BASE,STORE,EXIT
+1017:                 
+1017:                 ;   DECIMAL     ( -- )
+1017:                 ;               Use radix 10 as base for numeric conversions.
+1017:                 
+1017: 10231007                        FDB DECIM,L1230
+101B: 07444543494D41  L1240           FCB 7,"DECIMAL"
+1023: BD04F9          DECIM           jsr DOLST
+1026: 04E7                            FDB     DOCLIT
+1028: 0A                              FCB     10
+1029: 07CB05620558                    FDB     BASE,STORE,EXIT
+102F:                 
+102F:                 ;; Numeric input, single precision
+102F:                 
+102F:                 ;   DIGIT?      ( c base -- u t )
+102F:                 ;               Convert a character to its numeric value. A flag indicates success.
+102F:                 
+102F: 103A101B                        FDB DIGTQ,L1240
+1033: 0644494749543F  L1250           FCB 6,"DIGIT?"
+103A: BD04F9          DIGTQ           jsr DOLST
+103D: 05D204D600300A                  FDB     TOR,DOLIT,'0',SUBB
+1045: 04E7                            FDB     DOCLIT
+1047: 09                              FCB     9
+1048: 062A0A6C                        FDB     OVER,LESS
+104C: 0527105F                        FDB     QBRAN,DGTQ1
+1050: 04E7                            FDB     DOCLIT
+1052: 07                              FCB     7
+1053: 0A18                            FDB     SUBB
+1055: 060804D6000A0A                  FDB     DUPP,DOLIT,10,LESS,ORR
+105F: 060805B20A5505  DGTQ1           FDB     DUPP,RFROM,ULESS,EXIT
+1067:                 
+1067:                 ;   NUMBER?     ( a -- n T | a F )
+1067:                 ;               Convert a number string to integer. Push a flag on tos.
+1067:                 
+1067: 10731033                        FDB NUMBQ,L1250
+106B: 074E554D424552  L1260           FCB 7,"NUMBER?"
+1073: BD04F9          NUMBQ           jsr DOLST
+1076: 07CB057005D206                  FDB     BASE,AT,TOR,ZERO,OVER,COUNT
+1082: 062A058C04D600                  FDB     OVER,CAT,DOLIT,'$',EQUAL
+108C: 0527109A                        FDB     QBRAN,NUMQ1
+1090: 100B0617097D                    FDB     HEX,SWAP,PLUS1
+1096: 0617098D                        FDB     SWAP,MINUS1
+109A: 062A058C04D600  NUMQ1           FDB     OVER,CAT,DOLIT,'-',EQUAL,TOR
+10A6: 061705C50A1806                  FDB     SWAP,RAT,SUBB,SWAP,RAT,PLUS,QDUP
+10B4: 052710FC                        FDB     QBRAN,NUMQ6
+10B8: 098D05D2                        FDB     MINUS1,TOR
+10BC: 060805D2058C07  NUMQ2           FDB     DUPP,TOR,CAT,BASE,AT,DIGTQ
+10C8: 052710F0                        FDB     QBRAN,NUMQ4
+10CC: 061707CB05700C                  FDB     SWAP,BASE,AT,STAR,PLUS,RFROM
+10D8: 097D                            FDB     PLUS1
+10DA: 050810BC                        FDB     DONXT,NUMQ2
+10DE: 05C5061705FC                    FDB     RAT,SWAP,DROP
+10E4: 052710EA                        FDB     QBRAN,NUMQ3
+10E8: 09DF                            FDB     NEGAT
+10EA: 0617            NUMQ3           FDB     SWAP
+10EC: 053E10FA                        FDB     BRAN,NUMQ5
+10F0: 05B205B208F608  NUMQ4           FDB     RFROM,RFROM,DDROP,DDROP,ZERO
+10FA: 0608            NUMQ5           FDB     DUPP
+10FC: 05B208F6        NUMQ6           FDB     RFROM,DDROP
+1100: 05B207CB056205                  FDB     RFROM,BASE,STORE,EXIT
+1108:                 
+1108:                 ;; Basic I/O
+1108:                 
+1108:                 ;   ?KEY        ( -- c T | F )
+1108:                 ;               Return input character and true, or a false if no input.
+1108:                 
+1108:                 
+1108: 1111106B                        FDB QKEY,L1260
+110C: 043F4B4559      L1270           FCB 4,"?KEY"
+1111: BD04F9          QKEY            jsr DOLST
+1114: 076F0E300558                    FDB     TQKEY,ATEXE,EXIT
+111A:                 
+111A:                 ;   KEY         ( -- c )
+111A:                 ;               Wait for and return an input character.
+111A:                 
+111A: 1122110C                        FDB KEY,L1270
+111E: 034B4559        L1280           FCB 3,"KEY"
+1122: BD04F9          KEY             jsr DOLST
+1125: 1111            KEY1            FDB     QKEY
+1127: 05271125                        FDB     QBRAN,KEY1
+112B: 0558                            FDB     EXIT
+112D:                 
+112D:                 ;   EMIT        ( c -- )
+112D:                 ;               Send a character to the output device.
+112D:                 
+112D: 1136111E                        FDB EMIT,L1280
+1131: 04454D4954      L1290           FCB 4,"EMIT"
+1136: BD04F9          EMIT            jsr DOLST               
+1139: 077E0E300558                    FDB     TEMIT,ATEXE,EXIT
+113F:                 
+113F:                 ;   NUF?        ( -- t )
+113F:                 ;               Return false if no input, else pause and if CR return true.
+113F:                 
+113F: 11481131                        FDB NUFQ,L1290
+1143: 044E55463F      L1300           FCB 4,"NUF?"
+1148: BD04F9          NUFQ            jsr DOLST
+114B: 11110608                        FDB     QKEY,DUPP
+114F: 0527115C                        FDB     QBRAN,NUFQ1
+1153: 08F6112204E7                    FDB     DDROP,KEY,DOCLIT
+1159: 0D                              FCB     CRR
+115A: 0A3D                            FDB     EQUAL
+115C: 0558            NUFQ1           FDB     EXIT
+115E:                 
+115E:                 ;   PACE        ( -- )
+115E:                 ;               Send a pace character for the file downloading process.
+115E:                 
+115E: 11671143                        FDB PACE,L1300
+1162: 0450414345      L1310           FCB 4,"PACE"
+1167: BD04F9          PACE            jsr DOLST
+116A: 04E7                            FDB     DOCLIT
+116C: 0B                              FCB     11
+116D: 11360558                        FDB     EMIT,EXIT
+1171:                 
+1171:                 ;   SPACE       ( -- )
+1171:                 ;               Send the blank character to the output device.
+1171:                 
+1171: 117B1162                        FDB SPACE,L1310
+1175: 055350414345    L1320           FCB 5,"SPACE"
+117B: BD04F9          SPACE           jsr DOLST
+117E: 0D0811360558                    FDB     BLANK,EMIT,EXIT
+1184:                 
+1184:                 ;   SPACES      ( +n -- )
+1184:                 ;               Send n spaces to the output device.
+1184:                 
+1184: 118F1175                        FDB SPACS,L1320
+1188: 06535041434553  L1330           FCB 6,"SPACES"
+118F: BD04F9          SPACS           jsr DOLST
+1192: 06E20A8505D2                    FDB     ZERO,MAX,TOR
+1198: 053E119E                        FDB     BRAN,CHAR2
+119C: 117B            CHAR1           FDB     SPACE
+119E: 0508119C        CHAR2           FDB     DONXT,CHAR1
+11A2: 0558                            FDB     EXIT
+11A4:                 
+11A4:                 ;   TYPE        ( b u -- )
+11A4:                 ;               Output u characters from b.
+11A4:                 
+11A4: 11AD1188                        FDB TYPES,L1330
+11A8: 0454595045      L1340           FCB 4,"TYPE"
+11AD: BD04F9          TYPES           jsr DOLST
+11B0: 05D2                            FDB     TOR
+11B2: 053E11BE                        FDB     BRAN,TYPE2
+11B6: 0608058C1136    TYPE1           FDB     DUPP,CAT,EMIT
+11BC: 097D                            FDB     PLUS1
+11BE: 050811B6        TYPE2           FDB     DONXT,TYPE1
+11C2: 05FC0558                        FDB     DROP,EXIT
+11C6:                 
+11C6:                 ;   CR          ( -- )
+11C6:                 ;               Output a carriage return and a line feed.
+11C6:                 
+11C6: 11CD11A8                        FDB CR,L1340
+11CA: 024352          L1350           FCB 2,"CR"
+11CD: BD04F9          CR              jsr DOLST
+11D0: 04E7                            FDB     DOCLIT
+11D2: 0D                              FCB     CRR
+11D3: 1136                            FDB     EMIT
+11D5: 04E7                            FDB     DOCLIT
+11D7: 0A                              FCB     LF
+11D8: 11360558                        FDB     EMIT,EXIT
+11DC:                 
+11DC:                 ;   do$         ( -- a )
+11DC:                 ;               Return the address of a compiled string.
+11DC:                 
+11DC: 11E411CA                        FDB DOSTR,L1350
+11E0: 43646F24        L1360           FCB COMPO+3,"do$"
+11E4: BD04F9          DOSTR           jsr DOLST
+11E7: 05B205C505B20D                  FDB     RFROM,RAT,RFROM,COUNT,PLUS
+11F1: 0CFC05D2061705                  FDB     ALGND,TOR,SWAP,TOR,EXIT
+11FB:                 
+11FB:                 ;   $"|         ( -- a )
+11FB:                 ;               Run time routine compiled by $". Return address of a compiled string.
+11FB:                 
+11FB: 120311E0                        FDB STRQP,L1360
+11FF: 4324227C        L1370           FCB COMPO+3,'$','"','|'
+1203: BD04F9          STRQP           jsr DOLST
+1206: 11E40558                        FDB     DOSTR,EXIT              ;force a call to do$
+120A:                 
+120A:                 ;   ."|         ( -- )
+120A:                 ;               Run time routine of ." . Output a compiled string.
+120A:                 
+120A: 121211FF                        FDB DOTQP,L1370
+120E: 432E227C        L1380           FCB COMPO+3,'.','"','|'
+1212: BD04F9          DOTQP           jsr DOLST
+1215: 11E40DDC11AD05                  FDB     DOSTR,COUNT,TYPES,EXIT
+121D:                 
+121D:                 ;   .R          ( n +n -- )
+121D:                 ;               Display an integer in a field of n columns, right justified.
+121D:                 
+121D: 1224120E                        FDB DOTR,L1380
+1221: 022E52          L1390           FCB 2,".R"
+1224: BD04F9          DOTR            jsr DOLST
+1227: 05D20FEE05B206                  FDB     TOR,STR,RFROM,OVER,SUBB
+1231: 118F11AD0558                    FDB     SPACS,TYPES,EXIT
+1237:                 
+1237:                 ;   U.R         ( u +n -- )
+1237:                 ;               Display an unsigned integer in n column, right justified.
+1237:                 
+1237: 123F1221                        FDB UDOTR,L1390
+123B: 03552E52        L1400           FCB 3,"U.R"
+123F: BD04F9          UDOTR           jsr DOLST
+1242: 05D20F620FA30F                  FDB     TOR,BDIGS,DIGS,EDIGS
+124A: 05B2062A0A18                    FDB     RFROM,OVER,SUBB
+1250: 118F11AD0558                    FDB     SPACS,TYPES,EXIT
+1256:                 
+1256:                 ;   U.          ( u -- )
+1256:                 ;               Display an unsigned integer in free format.
+1256:                 
+1256: 125D123B                        FDB UDOT,L1400
+125A: 02552E          L1410           FCB 2,"U."
+125D: BD04F9          UDOT            jsr DOLST
+1260: 0F620FA30FD5                    FDB     BDIGS,DIGS,EDIGS
+1266: 117B11AD0558                    FDB     SPACE,TYPES,EXIT
+126C:                 
+126C:                 ;   .           ( w -- )
+126C:                 ;               Display an integer in free format, preceeded by a space.
+126C:                 
+126C: 1272125A                        FDB DOT,L1410
+1270: 012E            L1420           FCB 1,"."
+1272: BD04F9          DOT             jsr DOLST
+1275: 07CB057004E7                    FDB     BASE,AT,DOCLIT
+127B: 0A                              FCB     10
+127C: 0680                            FDB     XORR                    ;?decimal
+127E: 05271286                        FDB     QBRAN,DOT1
+1282: 125D0558                        FDB     UDOT,EXIT               ;no, display unsigned
+1286: 0FEE117B11AD05  DOT1            FDB     STR,SPACE,TYPES,EXIT    ;yes, display signed
+128E:                 
+128E:                 ;   ?           ( a -- )
+128E:                 ;               Display the contents in a memory cell.
+128E:                 
+128E: 12941270                        FDB QUEST,L1420
+1292: 013F            L1430           FCB 1,"?"
+1294: BD04F9          QUEST           jsr DOLST
+1297: 057012720558                    FDB     AT,DOT,EXIT
+129D:                 
+129D:                 ;; Parsing
+129D:                 
+129D:                 ;   parse       ( b u c -- b u delta ; <string> )
+129D:                 ;               Scan string delimited by c. Return found string and its offset.
+129D:                 
+129D: 12A71292                        FDB PARS,L1430
+12A1: 057061727365    L1440           FCB 5,"parse"
+12A7: BD04F9          PARS            jsr DOLST
+12AA: 07D80562062A05                  FDB     TEMP,STORE,OVER,TOR,DUPP
+12B4: 05271330                        FDB     QBRAN,PARS8
+12B8: 098D07D805700D                  FDB     MINUS1,TEMP,AT,BLANK,EQUAL
+12C2: 052712EA                        FDB     QBRAN,PARS3
+12C6: 05D2                            FDB     TOR
+12C8: 0D08062A058C    PARS1           FDB     BLANK,OVER,CAT          ;skip leading blanks ONLY
+12CE: 0A18063709C6                    FDB     SUBB,ZLESS,INVER
+12D4: 052712E8                        FDB     QBRAN,PARS2
+12D8: 097D                            FDB     PLUS1
+12DA: 050812C8                        FDB     DONXT,PARS1
+12DE: 05B205FC06E206                  FDB     RFROM,DROP,ZERO,DUPP,EXIT
+12E8: 05B2            PARS2           FDB     RFROM
+12EA: 062A0617        PARS3           FDB     OVER,SWAP
+12EE: 05D2                            FDB     TOR
+12F0: 07D80570062A05  PARS4           FDB     TEMP,AT,OVER,CAT,SUBB   ;scan for delimiter
+12FA: 07D805700D080A                  FDB     TEMP,AT,BLANK,EQUAL
+1302: 05271308                        FDB     QBRAN,PARS5
+1306: 0637                            FDB     ZLESS
+1308: 0527131A        PARS5           FDB     QBRAN,PARS6
+130C: 097D                            FDB     PLUS1
+130E: 050812F0                        FDB     DONXT,PARS4
+1312: 060805D2                        FDB     DUPP,TOR
+1316: 053E1324                        FDB     BRAN,PARS7
+131A: 05B205FC0608    PARS6           FDB     RFROM,DROP,DUPP
+1320: 097D05D2                        FDB     PLUS1,TOR
+1324: 062A0A18        PARS7           FDB     OVER,SUBB
+1328: 05B205B20A1805                  FDB     RFROM,RFROM,SUBB,EXIT
+1330: 062A05B20A1805  PARS8           FDB     OVER,RFROM,SUBB,EXIT
+1338:                 
+1338:                 ;   PARSE       ( c -- b u ; <string> )
+1338:                 ;               Scan input stream and return counted string delimited by c.
+1338:                 
+1338: 134212A1                        FDB PARSE,L1440
+133C: 055041525345    L1450           FCB 5,"PARSE"
+1342: BD04F9          PARSE           jsr DOLST
+1345: 05D20E1807F305                  FDB     TOR,TIB,INN,AT,PLUS     ;current input buffer pointer
+134F: 0801057007F305                  FDB     NTIB,AT,INN,AT,SUBB     ;remaining count
+1359: 05B212A707F30D                  FDB     RFROM,PARS,INN,PSTOR,EXIT
+1363:                 
+1363:                 ;   .(          ( -- )
+1363:                 ;               Output following string up to next ) .
+1363:                 
+1363: 136A133C                        FDB DOTPR,L1450
+1367: 822E28          L1460           FCB IMEDD+2,".("
+136A: BD04F9          DOTPR           jsr DOLST
+136D: 04D60029134211                  FDB     DOLIT,')',PARSE,TYPES,EXIT
+1377:                 
+1377:                 ;   (           ( -- )
+1377:                 ;               Ignore following string up to next ) . A comment.
+1377:                 
+1377: 137D1367                        FDB PAREN,L1460
+137B: 8128            L1470           FCB IMEDD+1,"("
+137D: BD04F9          PAREN           jsr DOLST
+1380: 04D60029134208                  FDB     DOLIT,')',PARSE,DDROP,EXIT
+138A:                 
+138A:                 ;   \           ( -- )
+138A:                 ;               Ignore following text till the end of line.
+138A:                 
+138A: 1390137B                        FDB BKSLA,L1470
+138E: 815C            L1480           FCB IMEDD+1,92 ; '\' but give as numeric to avoid different escap char processing in different assemblers
+1390: BD04F9          BKSLA           jsr DOLST
+1393: 0801057007F305                  FDB     NTIB,AT,INN,STORE,EXIT
+139D:                 
+139D:                 ;   CHAR        ( -- c )
+139D:                 ;               Parse next word and return its first character.
+139D:                 
+139D: 13A6138E                        FDB CHAR,L1480
+13A1: 0443484152      L1490           FCB 4,"CHAR"
+13A6: BD04F9          CHAR            jsr DOLST
+13A9: 0D08134205FC05                  FDB     BLANK,PARSE,DROP,CAT,EXIT
+13B3:                 
+13B3:                 ;   TOKEN       ( -- a ; <string> )
+13B3:                 ;               Parse a word from input stream and copy it to name dictionary.
+13B3:                 
+13B3: 13BD13A1                        FDB TOKEN,L1490
+13B7: 05544F4B454E    L1500           FCB 5,"TOKEN"
+13BD: BD04F9          TOKEN           jsr DOLST
+13C0: 0D08134204E7                    FDB     BLANK,PARSE,DOCLIT
+13C6: 1F                              FCB     31
+13C7: 0A9E                            FDB     MIN
+13C9: 08860570062A0A                  FDB     NP,AT,OVER,SUBB,CELLM
+13D3: 0EFE0558                        FDB     PACKS,EXIT
+13D7:                 
+13D7:                 ;   WORD        ( c -- a ; <string> )
+13D7:                 ;               Parse a word from input stream and copy it to code dictionary.
+13D7:                 
+13D7: 13E013B7                        FDB WORD,L1500
+13DB: 04574F5244      L1510           FCB 4,"WORD"
+13E0: BD04F9          WORD            jsr DOLST
+13E3: 13420DF20EFE05                  FDB     PARSE,HERE,PACKS,EXIT
+13EB:                 
+13EB:                 ;; Dictionary search
+13EB:                 
+13EB:                 ;   NAME>       ( na -- ca )
+13EB:                 ;               Return a code address given a name address.
+13EB:                 
+13EB: 13F513DB                        FDB NAMET,L1510
+13EF: 054E414D453E    L1520           FCB 5,"NAME>"
+13F5: BD04F9          NAMET           jsr DOLST
+13F8: 0CD20CD2057005                  FDB     CELLM,CELLM,AT,EXIT
+1400:                 
+1400:                 ;   SAME?       ( a a u -- a a f \ -0+ )
+1400:                 ;               Compare u bytes in two strings. Return 0 if identical.
+1400:                 
+1400: 140A13EF                        FDB SAMEQ,L1520
+1404: 0553414D453F    L1530           FCB 5,"SAME?"
+140A: BD04F9          SAMEQ           jsr DOLST
+140D: 05D2                            FDB     TOR
+140F: 053E1431                        FDB     BRAN,SAME2
+1413: 062A05C509B605  SAME1           FDB     OVER,RAT,PLUS,CAT
+141B: 062A05C509B605                  FDB     OVER,RAT,PLUS,CAT
+1423: 0A1808CA                        FDB     SUBB,QDUP
+1427: 05271431                        FDB     QBRAN,SAME2
+142B: 05B205FC0558                    FDB     RFROM,DROP,EXIT
+1431: 05081413        SAME2           FDB     DONXT,SAME1
+1435: 04D600000558                    FDB     DOLIT,0,EXIT
+143B:                 
+143B:                 ;   find        ( a va -- ca na | a F )
+143B:                 ;               Search a vocabulary for a string. Return ca and na if succeeded.
+143B:                 
+143B: 14441404                        FDB FIND,L1530
+143F: 0466696E64      L1540           FCB 4,"find"
+1444: BD04F9          FIND            jsr DOLST
+1447: 06170608058C09                  FDB     SWAP,DUPP,CAT,MINUS1
+144F: 07D80562                        FDB     TEMP,STORE
+1453: 0608057005D20C                  FDB     DUPP,AT,TOR,CELLP,SWAP
+145D: 05700608        FIND1           FDB     AT,DUPP
+1461: 0527148B                        FDB     QBRAN,FIND6
+1465: 0608057004D61F                  FDB     DUPP,AT,DOLIT,MASKK,ANDD,RAT,XORR
+1473: 0527147F                        FDB     QBRAN,FIND2
+1477: 0CBE0704                        FDB     CELLP,MONE
+147B: 053E1487                        FDB     BRAN,FIND3
+147F: 0CBE07D8057014  FIND2           FDB     CELLP,TEMP,AT,SAMEQ
+1487: 053E1497        FIND3           FDB     BRAN,FIND4
+148B: 05B205FC        FIND6           FDB     RFROM,DROP
+148F: 06170CD2061705                  FDB     SWAP,CELLM,SWAP,EXIT
+1497: 052714A3        FIND4           FDB     QBRAN,FIND5
+149B: 0CD20CD2                        FDB     CELLM,CELLM
+149F: 053E145D                        FDB     BRAN,FIND1
+14A3: 05B205FC061705  FIND5           FDB     RFROM,DROP,SWAP,DROP
+14AB: 0CD2                            FDB     CELLM
+14AD: 060813F5061705                  FDB     DUPP,NAMET,SWAP,EXIT
+14B5:                 
+14B5:                 ;   NAME?       ( a -- ca na | a F )
+14B5:                 ;               Search all context vocabularies for a string.
+14B5:                 
+14B5: 14BF143F                        FDB NAMEQ,L1540
+14B9: 054E414D453F    L1550           FCB 5,"NAME?"
+14BF: BD04F9          NAMEQ           jsr DOLST
+14C2: 085D06080DC306                  FDB     CNTXT,DUPP,DAT,XORR
+14CA: 052714D0                        FDB     QBRAN,NAMQ1
+14CE: 0CD2                            FDB     CELLM
+14D0: 05D2            NAMQ1           FDB     TOR
+14D2: 05B20CBE060805  NAMQ2           FDB     RFROM,CELLP,DUPP,TOR
+14DA: 057008CA                        FDB     AT,QDUP
+14DE: 052714F0                        FDB     QBRAN,NAMQ3
+14E2: 144408CA                        FDB     FIND,QDUP
+14E6: 052714D2                        FDB     QBRAN,NAMQ2
+14EA: 05B205FC0558                    FDB     RFROM,DROP,EXIT
+14F0: 05B205FC        NAMQ3           FDB     RFROM,DROP
+14F4: 06E20558                        FDB     ZERO,EXIT
+14F8:                 
+14F8:                 ;; Terminal response
+14F8:                 
+14F8:                 ;   ^H          ( bot eot cur -- bot eot cur )
+14F8:                 ;               Backup the cursor by one character.
+14F8:                 
+14F8: 14FF14B9                        FDB BKSP,L1550
+14FC: 025E48          L1560           FCB 2,"^H"
+14FF: BD04F9          BKSP            jsr DOLST
+1502: 05D2062A05B206                  FDB     TOR,OVER,RFROM,SWAP,OVER,XORR
+150E: 0527152A                        FDB     QBRAN,BACK1
+1512: 04D6000807AC0E                  FDB     DOLIT,BKSPP,TECHO,ATEXE,MINUS1
+151C: 0D0807AC0E30                    FDB     BLANK,TECHO,ATEXE
+1522: 04D6000807AC0E                  FDB     DOLIT,BKSPP,TECHO,ATEXE
+152A: 0558            BACK1           FDB     EXIT
+152C:                 
+152C:                 ;   TAP         ( bot eot cur c -- bot eot cur )
+152C:                 ;               Accept and echo the key stroke and bump the cursor.
+152C:                 
+152C: 153414FC                        FDB TAP,L1560
+1530: 03544150        L1570           FCB 3,"TAP"
+1534: BD04F9          TAP             jsr DOLST
+1537: 060807AC0E30                    FDB     DUPP,TECHO,ATEXE
+153D: 062A057D097D05                  FDB     OVER,CSTOR,PLUS1,EXIT
+1545:                 
+1545:                 ;   kTAP        ( bot eot cur c -- bot eot cur )
+1545:                 ;               Process a key stroke, CR or backspace.
+1545:                 
+1545: 154E1530                        FDB KTAP,L1570
+1549: 046B544150      L1580           FCB 4,"kTAP"
+154E: BD04F9          KTAP            jsr DOLST
+1551: 060804E7                        FDB     DUPP,DOCLIT
+1555: 0D                              FCB     CRR
+1556: 0680                            FDB     XORR
+1558: 0527157C                        FDB     QBRAN,KTAP2
+155C: 060804D6000806                  FDB     DUPP,DOLIT,BKSPP,XORR
+1564: 061704D6007F06                  FDB     SWAP,DOLIT,BKSPP2,XORR,ANDD
+156E: 05271578                        FDB     QBRAN,KTAP1
+1572: 0D0815340558                    FDB     BLANK,TAP,EXIT
+1578: 14FF0558        KTAP1           FDB     BKSP,EXIT
+157C: 05FC061705FC06  KTAP2           FDB     DROP,SWAP,DROP,DUPP,EXIT
+1586:                 
+1586:                 ;   accept      ( b u -- b u )
+1586:                 ;               Accept characters to input buffer. Return with actual count.
+1586:                 
+1586: 15911549                        FDB ACCEP,L1580
+158A: 06414343455054  L1590           FCB 6,"ACCEPT"
+1591: BD04F9          ACCEP           jsr DOLST
+1594: 062A09B6062A                    FDB     OVER,PLUS,OVER
+159A: 09080680        ACCP1           FDB     DDUP,XORR
+159E: 052715C0                        FDB     QBRAN,ACCP4
+15A2: 11220608                        FDB     KEY,DUPP
+15A6:                 ;               FDB     BLANK,SUBB,DOLIT,95,ULESS
+15A6: 0D0804D6007F0A                  FDB     BLANK,DOLIT,127,WITHI
+15AE: 052715B8                        FDB     QBRAN,ACCP2
+15B2: 1534                            FDB     TAP
+15B4: 053E15BC                        FDB     BRAN,ACCP3
+15B8: 079D0E30        ACCP2           FDB     TTAP,ATEXE
+15BC: 053E159A        ACCP3           FDB     BRAN,ACCP1
+15C0: 05FC062A0A1805  ACCP4           FDB     DROP,OVER,SUBB,EXIT
+15C8:                 
+15C8:                 ;   EXPECT      ( b u -- )
+15C8:                 ;               Accept input stream and store count in SPAN.
+15C8:                 
+15C8: 15D3158A                        FDB EXPEC,L1590
+15CC: 06455850454354  L1600           FCB 6,"EXPECT"
+15D3: BD04F9          EXPEC           jsr DOLST
+15D6: 078F0E3007E605                  FDB     TEXPE,ATEXE,SPAN,STORE,DROP,EXIT
+15E2:                 
+15E2:                 ;   QUERY       ( -- )
+15E2:                 ;               Accept input stream to terminal input buffer.
+15E2:                 
+15E2: 15EC15CC                        FDB QUERY,L1600
+15E6: 055155455259    L1610           FCB 5,"QUERY"
+15EC: BD04F9          QUERY           jsr DOLST
+15EF: 0E1804E7                        FDB     TIB,DOCLIT
+15F3: 50                              FCB     80
+15F4: 078F0E30080105                  FDB     TEXPE,ATEXE,NTIB,STORE
+15FC: 05FC06E207F305                  FDB     DROP,ZERO,INN,STORE,EXIT
+1606:                 
+1606:                 ;; Error handling
+1606:                 
+1606:                 ;   CATCH       ( ca -- 0 | err# )
+1606:                 ;               Execute word at ca and set up an error frame for it.
+1606:                 
+1606: 161015E6                        FDB CATCH,L1610
+160A: 054341544348    L1620           FCB 5,"CATCH"
+1610: BD04F9          CATCH           jsr DOLST
+1613: 05E005D2084C05                  FDB     SPAT,TOR,HANDL,AT,TOR   ;save error frame
+161D: 059B084C056205                  FDB     RPAT,HANDL,STORE,EXECU  ;execute
+1625: 05B2084C0562                    FDB     RFROM,HANDL,STORE       ;restore error frame
+162B: 05B205FC06E205                  FDB     RFROM,DROP,ZERO,EXIT    ;no error
+1633:                 
+1633:                 ;   THROW       ( err# -- err# )
+1633:                 ;               Reset system to current local error frame an update error flag.
+1633:                 
+1633: 163D160A                        FDB THROW,L1620
+1637: 055448524F57    L1630           FCB 5,"THROW"
+163D: BD04F9          THROW           jsr DOLST
+1640: 084C057005A7                    FDB     HANDL,AT,RPSTO          ;restore return stack
+1646: 05B2084C0562                    FDB     RFROM,HANDL,STORE       ;restore handler frame
+164C: 05B2061705D205                  FDB     RFROM,SWAP,TOR,SPSTO    ;restore data stack
+1654: 05FC05B20558                    FDB     DROP,RFROM,EXIT
+165A:                 
+165A:                 ;   NULL$       ( -- a )
+165A:                 ;               Return address of a null string with zero count.
+165A:                 
+165A: 16641637                        FDB NULLS,L1630
+165E: 054E554C4C24    L1640           FCB 5,"NULL$"
+1664:                 NULLS
+1664:                 ;;;;            jsr DOLST
+1664:                 ;;;;            FDB     DOVAR                   ;emulate CREATE
+1664: BD071A                          jsr FDOVAR
+1667: 0000                            FDB     0
+1669: 636F796F7465                    FCB     99,111,121,111,116,101
+166F:                 
+166F:                 ;   ABORT       ( -- )
+166F:                 ;               Reset data stack and jump to QUIT.
+166F:                 
+166F: 1679165E                        FDB ABORT,L1640
+1673: 0541424F5254    L1650           FCB 5,"ABORT"
+1679: BD04F9          ABORT           jsr DOLST
+167C: 1664163D                        FDB     NULLS,THROW
+1680:                 
+1680:                 ;   abort"      ( f -- )
+1680:                 ;               Run time routine of ABORT" . Abort with a message.
+1680:                 
+1680: 168B1673                        FDB ABORQ,L1650
+1684: 4661626F727422  L1660           FCB COMPO+6,"abort",'"'
+168B: BD04F9          ABORQ           jsr DOLST
+168E: 05271696                        FDB     QBRAN,ABOR1             ;text flag
+1692: 11E4163D                        FDB     DOSTR,THROW             ;pass error string
+1696: 11E405FC0558    ABOR1           FDB     DOSTR,DROP,EXIT         ;drop error
+169C:                 
+169C:                 ;; The text interpreter
+169C:                 
+169C:                 ;   $INTERPRET  ( a -- )
+169C:                 ;               Interpret a word. If failed, try to convert it to an integer.
+169C:                 
+169C: 16AB1684                        FDB INTER,L1660
+16A0: 0A24494E544552  L1670           FCB 10,"$INTERPRET"
+16AB: BD04F9          INTER           jsr DOLST
+16AE: 14BF08CA                        FDB     NAMEQ,QDUP              ;?defined
+16B2: 052716D2                        FDB     QBRAN,INTE1
+16B6: 057004D6400006                  FDB     AT,DOLIT,COMPO<<8,ANDD  ;?compile only lexicon bits
+16BE: 168B                            FDB     ABORQ
+16C0: 0D20636F6D7069                  FCB     13," compile only"
+16CE: 054E0558                        FDB     EXECU,EXIT              ;execute defined word
+16D2: 082E0E30        INTE1           FDB     TNUMB,ATEXE             ;convert a number
+16D6: 052716DC                        FDB     QBRAN,INTE2
+16DA: 0558                            FDB     EXIT
+16DC: 163D            INTE2           FDB     THROW                   ;error
+16DE:                 
+16DE:                 ;   [           ( -- )
+16DE:                 ;               Start the text interpreter.
+16DE:                 
+16DE: 16E416A0                        FDB LBRAC,L1670
+16E2: 815B            L1680           FCB IMEDD+1,"["
+16E4: BD04F9          LBRAC           jsr DOLST
+16E7: 04D616AB081D05                  FDB     DOLIT,INTER,TEVAL,STORE,EXIT
+16F1:                 
+16F1:                 ;   .OK         ( -- )
+16F1:                 ;               Display 'ok' only while interpreting.
+16F1:                 
+16F1: 16F916E2                        FDB DOTOK,L1680
+16F5: 032E4F4B        L1690           FCB 3,".OK"
+16F9: BD04F9          DOTOK           jsr DOLST
+16FC: 04D616AB081D05                  FDB     DOLIT,INTER,TEVAL,AT,EQUAL
+1706: 05271710                        FDB     QBRAN,DOTO1
+170A: 1212                            FDB     DOTQP
+170C: 03206F6B                        FCB     3," ok"
+1710: 11CD0558        DOTO1           FDB     CR,EXIT
+1714:                 
+1714:                 ;   ?STACK      ( -- )
+1714:                 ;               Abort if the data stack underflows.
+1714:                 
+1714: 171F16F5                        FDB QSTAC,L1690
+1718: 063F535441434B  L1700           FCB 6,"?STACK"
+171F: BD04F9          QSTAC           jsr DOLST
+1722: 0D3F0637                        FDB     DEPTH,ZLESS             ;check only for underflow
+1726: 168B                            FDB     ABORQ
+1728: 0A20756E646572                  FCB     10," underflow"
+1733: 0558                            FDB     EXIT
+1735:                 
+1735:                 ;   EVAL        ( -- )
+1735:                 ;               Interpret the input stream.
+1735:                 
+1735: 173E1718                        FDB EVAL,L1700
+1739: 044556414C      L1710           FCB 4,"EVAL"
+173E: BD04F9          EVAL            jsr DOLST
+1741: 13BD0608058C    EVAL1           FDB     TOKEN,DUPP,CAT          ;?input stream empty
+1747: 05271755                        FDB     QBRAN,EVAL2
+174B: 081D0E30171F                    FDB     TEVAL,ATEXE,QSTAC       ;evaluate input, check stack
+1751: 053E1741                        FDB     BRAN,EVAL1
+1755: 05FC07BD0E3005  EVAL2           FDB     DROP,TPROM,ATEXE,EXIT   ;prompt
+175D:                 
+175D:                 ;; Shell
+175D:                 
+175D:                 ;   PRESET      ( -- )
+175D:                 ;               Reset data stack pointer and the terminal input buffer.
+175D:                 
+175D: 17681739                        FDB PRESE,L1710
+1761: 06505245534554  L1720           FCB 6,"PRESET"
+1768: BD04F9          PRESE           jsr DOLST
+176B: 0753057005EE                    FDB     SZERO,AT,SPSTO
+1771: 04D63E7008010C                  FDB     DOLIT,TIBB,NTIB,CELLP,STORE,EXIT
+177D:                 
+177D:                 ;   xio         ( a a a -- )
+177D:                 ;               Reset the I/O vectors 'EXPECT, 'TAP, 'ECHO and 'PROMPT.
+177D:                 
+177D: 17851761                        FDB XIO,L1720
+1781: 4378696F        L1730           FCB COMPO+3,"xio"
+1785: BD04F9          XIO             jsr DOLST
+1788: 04D61591078F0D                  FDB     DOLIT,ACCEP,TEXPE,DSTOR
+1790: 07AC0DAD0558                    FDB     TECHO,DSTOR,EXIT
+1796:                 
+1796:                 ;   FILE        ( -- )
+1796:                 ;               Select I/O vectors for file download.
+1796:                 
+1796: 179F1781                        FDB FILE,L1730
+179A: 0446494C45      L1740           FCB 4,"FILE"
+179F: BD04F9          FILE            jsr DOLST
+17A2: 04D6116704D605                  FDB     DOLIT,PACE,DOLIT,DROP
+17AA: 04D6154E178505                  FDB     DOLIT,KTAP,XIO,EXIT
+17B2:                 
+17B2:                 ;   HAND        ( -- )
+17B2:                 ;               Select I/O vectors for terminal interface.
+17B2:                 
+17B2: 17BB179A                        FDB HAND,L1740
+17B6: 0448414E44      L1750           FCB 4,"HAND"
+17BB: BD04F9          HAND            jsr DOLST
+17BE: 04D616F904D611                  FDB     DOLIT,DOTOK,DOLIT,EMIT
+17C6: 04D6154E178505                  FDB     DOLIT,KTAP,XIO,EXIT
+17CE:                 
+17CE:                 ;   I/O         ( -- a )
+17CE:                 ;               Array to store default I/O vectors.
+17CE:                 
+17CE: 17D617B6                        FDB ISLO,L1750
+17D2: 03492F4F        L1760           FCB 3,"I/O"
+17D6:                 ISLO
+17D6:                 ;;              jsr DOLST
+17D6:                 ;;              FDB     DOVAR                   ;emulate CREATE
+17D6: BD071A                          jsr FDOVAR
+17D9: 049304B4                        FDB     QRX,TXSTO               ;default I/O vectors
+17DD:                 
+17DD:                 ;   CONSOLE     ( -- )
+17DD:                 ;               Initiate terminal interface.
+17DD:                 
+17DD: 17E917D2                        FDB CONSO,L1760
+17E1: 07434F4E534F4C  L1770           FCB 7,"CONSOLE"
+17E9: BD04F9          CONSO           jsr DOLST
+17EC: 17D60DC3076F0D                  FDB     ISLO,DAT,TQKEY,DSTOR    ;restore default I/O device
+17F4: 17BB0558                        FDB     HAND,EXIT               ;keyboard input
+17F8:                 
+17F8:                 ;   QUIT        ( -- )
+17F8:                 ;               Reset return stack pointer and start text interpreter.
+17F8:                 
+17F8: 180117E1                        FDB QUIT,L1770
+17FC: 0451554954      L1780           FCB 4,"QUIT"
+1801: BD04F9          QUIT            jsr DOLST
+1804: 0760057005A7                    FDB     RZERO,AT,RPSTO          ;reset return stack pointer
+180A: 16E4            QUIT1           FDB     LBRAC                   ;start interpretation
+180C: 15EC            QUIT2           FDB     QUERY                   ;get input
+180E: 04D6173E161008                  FDB     DOLIT,EVAL,CATCH,QDUP   ;evaluate input
+1816: 0527180C                        FDB     QBRAN,QUIT2             ;continue till error
+181A: 07BD057005D2                    FDB     TPROM,AT,TOR            ;save input device
+1820: 17E91664062A06                  FDB     CONSO,NULLS,OVER,XORR   ;?display error message
+1828: 05271838                        FDB     QBRAN,QUIT3
+182C: 117B0DDC11AD                    FDB     SPACE,COUNT,TYPES       ;error message
+1832: 1212                            FDB     DOTQP
+1834: 03203F20                        FCB     3," ? "                 ;error prompt
+1838: 05B204D616F906  QUIT3           FDB     RFROM,DOLIT,DOTOK,XORR  ;?file input
+1840: 0527184A                        FDB     QBRAN,QUIT4
+1844: 04D6001B1136                    FDB     DOLIT,ERR,EMIT          ;file error, tell host
+184A: 1768            QUIT4           FDB     PRESE                   ;some cleanup
+184C: 053E180A                        FDB     BRAN,QUIT1
+1850:                 
+1850:                 ;; The compiler
+1850:                 
+1850:                 ;   '           ( -- ca )
+1850:                 ;               Search context vocabularies for the next word in input stream.
+1850:                 
+1850: 185617FC                        FDB TICK,L1780
+1854: 0127            L1790           FCB 1,"'"
+1856: BD04F9          TICK            jsr DOLST
+1859: 13BD14BF                        FDB     TOKEN,NAMEQ             ;?defined
+185D: 05271863                        FDB     QBRAN,TICK1
+1861: 0558                            FDB     EXIT                    ;yes, push code address
+1863: 163D            TICK1           FDB     THROW                   ;no, error
+1865:                 
+1865:                 ;   ALLOT       ( n -- )
+1865:                 ;               Allocate n bytes to the code dictionary.
+1865:                 
+1865: 186F1854                        FDB ALLOT,L1790
+1869: 05414C4C4F54    L1800           FCB 5,"ALLOT"
+186F: BD04F9          ALLOT           jsr DOLST
+1872: 087A0D9C0558                    FDB     CP,PSTOR,EXIT           ;adjust code pointer
+1878:                 
+1878:                 ;   ,           ( w -- )
+1878:                 ;               Compile an integer into the code dictionary.
+1878:                 
+1878: 187E1869                        FDB COMMA,L1800
+187C: 012C            L1810           FCB 1,","
+187E: BD04F9          COMMA           jsr DOLST
+1881: 0DF206080CBE                    FDB     HERE,DUPP,CELLP         ;cell boundary
+1887: 087A0562056205                  FDB     CP,STORE,STORE,EXIT     ;adjust code pointer and compile
+188F:                 
+188F:                 ;   [COMPILE]   ( -- ; <string> )
+188F:                 ;               Compile the next immediate word into code dictionary.
+188F:                 
+188F: 189D187C                        FDB BCOMP,L1810
+1893: 895B434F4D5049  L1820           FCB IMEDD+9,"[COMPILE]"
+189D: BD04F9          BCOMP           jsr DOLST
+18A0: 1856187E0558                    FDB     TICK,COMMA,EXIT
+18A6:                 
+18A6:                 ;   COMPILE     ( -- )
+18A6:                 ;               Compile the next address in colon list to code dictionary.
+18A6:                 
+18A6: 18B21893                        FDB COMPI,L1820
+18AA: 47434F4D50494C  L1830           FCB COMPO+7,"COMPILE"
+18B2: BD04F9          COMPI           jsr DOLST
+18B5: 05B20608057018                  FDB     RFROM,DUPP,AT,COMMA     ;compile address
+18BD: 0CBE05D20558                    FDB     CELLP,TOR,EXIT          ;adjust return address
+18C3:                 
+18C3:                 ;   LITERAL     ( w -- )
+18C3:                 ;               Compile tos to code dictionary as an integer literal.
+18C3:                 
+18C3: 18CF18AA                        FDB LITER,L1830
+18C7: 874C4954455241  L1840           FCB IMEDD+7,"LITERAL"
+18CF: BD04F9          LITER           jsr DOLST
+18D2: 18B204D6187E05                  FDB     COMPI,DOLIT,COMMA,EXIT
+18DA:                 
+18DA:                 ;   $,"         ( -- )
+18DA:                 ;               Compile a literal string up to next " .
+18DA:                 
+18DA: 18E218C7                        FDB STRCQ,L1840
+18DE: 03242C22        L1850           FCB 3,"$,",'"'
+18E2: BD04F9          STRCQ           jsr DOLST
+18E5: 04D6002213E0                    FDB     DOLIT,'"',WORD          ;move string to code dictionary
+18EB: 0DDC09B60CFC                    FDB     COUNT,PLUS,ALGND        ;calculate aligned end of string
+18F1: 087A05620558                    FDB     CP,STORE,EXIT           ;adjust the code pointer
+18F7:                 
+18F7:                 ;   RECURSE     ( -- )
+18F7:                 ;               Make the current word available for compilation.
+18F7:                 
+18F7: 190318DE                        FDB RECUR,L1850
+18FB: 87524543555253  L1860           FCB IMEDD+7,"RECURSE"
+1903: BD04F9          RECUR           jsr DOLST
+1906: 0894057013F518                  FDB     LAST,AT,NAMET,COMMA,EXIT
+1910:                 
+1910:                 ;; Structures
+1910:                 
+1910:                 ;   DO          ( -- a m )
+1910:                 ;               Start a DO-LOOP/+LOOP structure in a colon definition.
+1910:                                 
+1910: 191718FB                        FDB DO,L1860
+1914: 82444F          L1861           FCB IMEDD+2,"DO"
+1917: BD04F9          DO              jsr DOLST
+191A: 18B219A10DF2                    FDB     COMPI,DODO,HERE
+1920: 06ED                            FDB     ONE             ; marker for DO
+1922: 0558                            FDB     EXIT
+1924:                 
+1924:                 ;   ?DO         ( -- a m )
+1924:                 ;               Start a ?DO-LOOP/+LOOP structure in a colon definition.
+1924:                                 
+1924: 192C1914                        FDB QDO,L1861
+1928: 833F444F        L1862           FCB IMEDD+3,"?DO"
+192C: BD04F9          QDO             jsr DOLST
+192F: 18B219470DF2                    FDB     COMPI,DOQDO,HERE
+1935: 18B20000                        FDB     COMPI,0         ; branch destination placeholder
+1939: 06F8                            FDB     TWO             ; marker for ?DO
+193B: 0558                            FDB     EXIT
+193D:                 
+193D:                 ;   (?DO)       ( w w -- )
+193D:                 ;               Runtime part of DO in a DO-LOOP/+LOOP structure.
+193D:                                 
+193D: 19471928                        FDB DOQDO,L1862
+1941: 05283F444F29    L1862A          FCB 5,"(?DO)"
+1947:                 DOQDO           
+1947: 3506                            puls d          ;start
+1949: 10A3E4                          cmpd ,s         ;start < end -> ok
+194C: 2D06                            blt DOQDO1
+194E: 3262                            leas 2,s        ;drop end
+1950: EEC4                            ldu ,u
+1952: 3780                            pulu pc         ;branch past loop
+1954:                 DOQDO1
+1954: 3510                            puls x          ;end
+1956: AFA3                            stx ,--y        ;end to return stack
+1958: EDA3                            std ,--y        ;start to return stack
+195A: 3342                            leau 2,u        ;skip jump forward
+195C: 3780                            pulu pc
+195E:                 
+195E:                 ;   -DO         ( -- a m )
+195E:                 ;               Start a -DO-LOOP/+LOOP structure in a colon definition.
+195E:                                 
+195E: 19661941                        FDB MDO,L1862A
+1962: 832D444F        L1862B          FCB IMEDD+3,"-DO"
+1966: BD04F9          MDO             jsr DOLST
+1969: 18B219810DF2                    FDB     COMPI,DOMDO,HERE
+196F: 18B20000                        FDB     COMPI,0         ; branch destination placeholder
+1973: 06F8                            FDB     TWO             ; marker for ?DO/-DO
+1975: 0558                            FDB     EXIT
+1977:                 
+1977:                 ;   (-DO)       ( w w -- )
+1977:                 ;               Runtime part of -DO in a -DO-LOOP/+LOOP structure.
+1977:                                 
+1977: 19811962                        FDB DOMDO,L1862B
+197B: 05282D444F29    L1862C          FCB 5,"(-DO)"
+1981:                 DOMDO           
+1981: 3506                            puls d          ;start
+1983: 10A3E4                          cmpd ,s         ;start > end -> ok
+1986: 2E06                            bgt DOMDO1
+1988: 3262                            leas 2,s        ;drop end
+198A: EEC4                            ldu ,u
+198C: 3780                            pulu pc         ;branch past loop
+198E:                 DOMDO1
+198E: 3510                            puls x          ;end
+1990: AFA3                            stx ,--y        ;end to return stack
+1992: EDA3                            std ,--y        ;start to return stack
+1994: 3342                            leau 2,u        ;skip jump forward
+1996: 3780                            pulu pc
+1998:                 
+1998:                 ;   (DO)        ( w w -- )
+1998:                 ;               Runtime part of DO in a DO-LOOP/+LOOP structure.
+1998:                                 
+1998: 19A1197B                        FDB DODO,L1862C
+199C: 0428444F29      L1863           FCB 4,"(DO)"
+19A1:                 DODO            
+19A1: 3516                            puls d,x        ;start first, end second
+19A3: AFA3                            stx ,--y        ;end to return stack
+19A5: EDA3                            std ,--y        ;start to return stack
+19A7: 3780                            pulu pc
+19A9:                 
+19A9:                 ;   (LOOP)      ( -- )
+19A9:                 ;               Runtime part of LOOP
+19A9:                 
+19A9: 19B4199C                        FDB DOLOOP,L1863
+19AD: 06284C4F4F5029  L1864           FCB 6,"(LOOP)"
+19B4:                 DOLOOP          
+19B4: CC0001                          ldd #1
+19B7: 201D                            bra DOPLOF
+19B9:                 
+19B9:                 ;   (+LOOP)     ( -- )
+19B9:                 ;               Runtime part of +LOOP
+19B9:                 
+19B9: 19C519AD                        FDB DOPLOOP,L1864
+19BD: 87282B4C4F4F50  L1865           FCB IMEDD+7,"(+LOOP)"
+19C5:                 DOPLOOP         
+19C5: ECE1                            ldd ,s++        ; increment
+19C7: 2A0D                            bpl DOPLOF      ; forward
+19C9: E3A4                            addd ,y         ; start/index
+19CB: 10A322                          cmpd 2,y        ; end
+19CE: 2F13                            ble DOPLO1      ; index <= end -> leave
+19D0: EDA4                            std ,y
+19D2: EEC4                            ldu ,u          ; branch to begin of loop
+19D4: 3780                            pulu pc
+19D6:                 
+19D6: E3A4            DOPLOF          addd ,y         ; start/index
+19D8: 10A322                          cmpd 2,y        ; end
+19DB: 2C06                            bge DOPLO1      ; index >= end -> leave
+19DD: EDA4                            std ,y          ; save back
+19DF: EEC4                            ldu ,u          ; branch to begin of loop
+19E1: 3780                            pulu pc
+19E3:                 DOPLO1
+19E3: 3342                            leau 2,u        ; skip back destination
+19E5: 3124                            leay 4,y        ; remove index and upper from r stack
+19E7: 3780                            pulu pc
+19E9:                 
+19E9:                 ;   LOOP        ( a m -- )
+19E9:                 ;               Terminate a DO/?DO-LOOP loop structure.
+19E9:                 
+19E9: 19F219BD                        FDB LOOP,L1865
+19ED: 844C4F4F50      L1866           FCB IMEDD+4,"LOOP"
+19F2: BD04F9          LOOP            jsr DOLST
+19F5: 18B219B4                        FDB     COMPI,DOLOOP
+19F9: 06F80A3D05271A                  FDB     TWO,EQUAL,QBRAN,LOOP1
+1A01: 0DF20CBE062A05                  FDB     HERE,CELLP,OVER,STORE,CELLP     ; branch forward destination
+1A0B: 187E0558        LOOP1           FDB     COMMA,EXIT
+1A0F:                 
+1A0F:                 
+1A0F:                 ;   +LOOP       ( a m -- )
+1A0F:                 ;               Terminate a DO/?DO-+LOOP loop structure.
+1A0F:                 
+1A0F: 1A1919ED                        FDB PLOOP,L1866
+1A13: 852B4C4F4F50    L1867           FCB IMEDD+5,"+LOOP"
+1A19: BD04F9          PLOOP           jsr DOLST
+1A1C: 18B219C5                        FDB     COMPI,DOPLOOP
+1A20: 06F80A3D05271A                  FDB     TWO,EQUAL,QBRAN,PLOOP1
+1A28: 0DF20CBE062A05                  FDB     HERE,CELLP,OVER,STORE,CELLP     ; branch forward destination
+1A32: 187E0558        PLOOP1          FDB     COMMA,EXIT
+1A36:                 
+1A36:                 ;   LEAVE       ( -- )
+1A36:                 ;               Leave DO/LOOP
+1A36:                 
+1A36: 1A401A13                        FDB LEAVE,L1867
+1A3A: 054C45415645    L1868           FCB 5,"LEAVE"
+1A40:                 LEAVE
+1A40: ECA4                            ldd ,y          ;take index on return stack
+1A42: ED22                            std 2,y         ;and change end to it
+1A44: 3780                            pulu pc
+1A46:                 
+1A46:                 ;   FOR         ( -- a )
+1A46:                 ;               Start a FOR-NEXT loop structure in a colon definition.
+1A46:                                 
+1A46: 1A4E1A13                        FDB FOR,L1867
+1A4A: 83464F52        L1870           FCB IMEDD+3,"FOR"
+1A4E: BD04F9          FOR             jsr DOLST
+1A51: 18B205D20DF205                  FDB     COMPI,TOR,HERE,EXIT
+1A59:                 
+1A59:                 ;   BEGIN       ( -- a )
+1A59:                 ;               Start an infinite or indefinite loop structure.
+1A59:                 
+1A59: 1A631A4A                        FDB BEGIN,L1870
+1A5D: 85424547494E    L1880           FCB IMEDD+5,"BEGIN"
+1A63: BD04F9          BEGIN           jsr DOLST
+1A66: 0DF20558                        FDB     HERE,EXIT
+1A6A:                 
+1A6A:                 ;   NEXT        ( a -- )
+1A6A:                 ;               Terminate a FOR-NEXT loop structure.
+1A6A:                 
+1A6A: 1A731A5D                        FDB NEXT,L1880
+1A6E: 844E455854      L1890           FCB IMEDD+4,"NEXT"
+1A73: BD04F9          NEXT            jsr DOLST
+1A76: 18B20508187E05                  FDB     COMPI,DONXT,COMMA,EXIT
+1A7E:                 
+1A7E:                 ;   UNTIL       ( a -- )
+1A7E:                 ;               Terminate a BEGIN-UNTIL indefinite loop structure.
+1A7E:                 
+1A7E: 1A881A6E                        FDB UNTIL,L1890
+1A82: 85554E54494C    L1900           FCB IMEDD+5,"UNTIL"
+1A88: BD04F9          UNTIL           jsr DOLST
+1A8B: 18B20527187E05                  FDB     COMPI,QBRAN,COMMA,EXIT
+1A93:                 
+1A93:                 ;   AGAIN       ( a -- )
+1A93:                 ;               Terminate a BEGIN-AGAIN infinite loop structure.
+1A93:                 
+1A93: 1A9D1A82                        FDB AGAIN,L1900
+1A97: 85414741494E    L1910           FCB IMEDD+5,"AGAIN"
+1A9D: BD04F9          AGAIN           jsr DOLST
+1AA0: 18B2053E187E05                  FDB     COMPI,BRAN,COMMA,EXIT
+1AA8:                 
+1AA8:                 ;   IF          ( -- A )
+1AA8:                 ;               Begin a conditional branch structure.
+1AA8:                 
+1AA8: 1AAF1A97                        FDB IFF,L1910
+1AAC: 824946          L1920           FCB IMEDD+2,"IF"
+1AAF: BD04F9          IFF             jsr DOLST
+1AB2: 18B205270DF2                    FDB     COMPI,QBRAN,HERE
+1AB8: 06E2187E0558                    FDB     ZERO,COMMA,EXIT
+1ABE:                 
+1ABE:                 ;   AHEAD       ( -- A )
+1ABE:                 ;               Compile a forward branch instruction.
+1ABE:                 
+1ABE: 1AC81AAC                        FDB AHEAD,L1920
+1AC2: 854148454144    L1930           FCB IMEDD+5,"AHEAD"
+1AC8: BD04F9          AHEAD           jsr DOLST
+1ACB: 18B2053E0DF206                  FDB     COMPI,BRAN,HERE,ZERO,COMMA,EXIT
+1AD7:                 
+1AD7:                 ;   REPEAT      ( A a -- )
+1AD7:                 ;               Terminate a BEGIN-WHILE-REPEAT indefinite loop.
+1AD7:                 
+1AD7: 1AE21AC2                        FDB REPEA,L1930
+1ADB: 86524550454154  L1940           FCB IMEDD+6,"REPEAT"
+1AE2: BD04F9          REPEA           jsr DOLST
+1AE5: 1A9D0DF2061705                  FDB     AGAIN,HERE,SWAP,STORE,EXIT
+1AEF:                 
+1AEF:                 ;   THEN        ( A -- )
+1AEF:                 ;               Terminate a conditional branch structure.
+1AEF:                 
+1AEF: 1AF81ADB                        FDB THENN,L1940
+1AF3: 845448454E      L1950           FCB IMEDD+4,"THEN"
+1AF8: BD04F9          THENN           jsr DOLST
+1AFB: 0DF20617056205                  FDB     HERE,SWAP,STORE,EXIT
+1B03:                 
+1B03:                 ;   AFT         ( a -- a A )
+1B03:                 ;               Jump to THEN in a FOR-AFT-THEN-NEXT loop the first time through.
+1B03:                 
+1B03: 1B0B1AF3                        FDB AFT,L1950
+1B07: 83414654        L1960           FCB IMEDD+3,"AFT"
+1B0B: BD04F9          AFT             jsr DOLST
+1B0E: 05FC1AC81A6306                  FDB     DROP,AHEAD,BEGIN,SWAP,EXIT
+1B18:                 
+1B18:                 ;   ELSE        ( A -- A )
+1B18:                 ;               Start the false clause in an IF-ELSE-THEN structure.
+1B18:                 
+1B18: 1B211B07                        FDB ELSEE,L1960
+1B1C: 84454C5345      L1970           FCB IMEDD+4,"ELSE"
+1B21: BD04F9          ELSEE           jsr DOLST
+1B24: 1AC806171AF805                  FDB     AHEAD,SWAP,THENN,EXIT
+1B2C:                 
+1B2C:                 ;   WHILE       ( a -- A a )
+1B2C:                 ;               Conditional branch out of a BEGIN-WHILE-REPEAT loop.
+1B2C:                 
+1B2C: 1B361B1C                        FDB WHILE,L1970
+1B30: 855748494C45    L1980           FCB IMEDD+5,"WHILE"
+1B36: BD04F9          WHILE           jsr DOLST
+1B39: 1AAF06170558                    FDB     IFF,SWAP,EXIT
+1B3F:                 
+1B3F:                 ;   ABORT"      ( -- ; <string> )
+1B3F:                 ;               Conditional abort with an error message.
+1B3F:                 
+1B3F: 1B4A1B30                        FDB ABRTQ,L1980
+1B43: 8641424F525422  L1990           FCB IMEDD+6,"ABORT",'"'
+1B4A: BD04F9          ABRTQ           jsr DOLST
+1B4D: 18B2168B18E205                  FDB     COMPI,ABORQ,STRCQ,EXIT
+1B55:                 
+1B55:                 ;   $"          ( -- ; <string> )
+1B55:                 ;               Compile an inline string literal.
+1B55:                 
+1B55: 1B5C1B43                        FDB STRQ,L1990
+1B59: 822422          L2000           FCB IMEDD+2,'$','"'
+1B5C: BD04F9          STRQ            jsr DOLST
+1B5F: 18B2120318E205                  FDB     COMPI,STRQP,STRCQ,EXIT
+1B67:                 
+1B67:                 ;   ."          ( -- ; <string> )
+1B67:                 ;               Compile an inline string literal to be typed out at run time.
+1B67:                 
+1B67: 1B6E1B59                        FDB DOTQ,L2000
+1B6B: 822E22          L2010           FCB IMEDD+2,'.','"'
+1B6E: BD04F9          DOTQ            jsr DOLST
+1B71: 18B2121218E205                  FDB     COMPI,DOTQP,STRCQ,EXIT
+1B79:                 
+1B79:                 ;; Name compiler
+1B79:                 
+1B79:                 ;   ?UNIQUE     ( a -- a )
+1B79:                 ;               Display a warning message if the word already exists.
+1B79:                 
+1B79: 1B851B6B                        FDB UNIQU,L2010
+1B7D: 073F554E495155  L2020           FCB 7,"?UNIQUE"
+1B85: BD04F9          UNIQU           jsr DOLST
+1B88: 060814BF                        FDB     DUPP,NAMEQ              ;?name exists
+1B8C: 05271BA0                        FDB     QBRAN,UNIQ1
+1B90: 1212                            FDB     DOTQP                   ;redefinitions are OK
+1B92: 07207265446566                  FCB     7," reDef "             ;but the user should be warned
+1B9A: 062A0DDC11AD                    FDB     OVER,COUNT,TYPES        ;just in case its not planned
+1BA0: 05FC0558        UNIQ1           FDB     DROP,EXIT
+1BA4:                 
+1BA4:                 ;   $,n         ( na -- )
+1BA4:                 ;               Build a new dictionary name using the string at na.
+1BA4:                 
+1BA4: 1BAC1B7D                        FDB SNAME,L2020
+1BA8: 03242C6E        L2030           FCB 3,"$,n"
+1BAC: BD04F9          SNAME           jsr DOLST
+1BAF: 0608058C                        FDB     DUPP,CAT                ;?null input
+1BB3: 05271BDD                        FDB     QBRAN,PNAM1
+1BB7: 1B85                            FDB     UNIQU                   ;?redefinition
+1BB9: 060808940562                    FDB     DUPP,LAST,STORE         ;save na for vocabulary link
+1BBF: 0DF20CFC0617                    FDB     HERE,ALGND,SWAP         ;align code address
+1BC5: 0CD2                            FDB     CELLM                   ;link address
+1BC7: 086E0570057006                  FDB     CRRNT,AT,AT,OVER,STORE
+1BD1: 0CD20608088605                  FDB     CELLM,DUPP,NP,STORE     ;adjust name pointer
+1BD9: 05620558                        FDB     STORE,EXIT              ;save code pointer
+1BDD: 1203            PNAM1           FDB     STRQP
+1BDF: 05206E616D65                    FCB     5," name"               ;null input
+1BE5: 163D                            FDB     THROW
+1BE7:                 
+1BE7:                 ;; FORTH compiler
+1BE7:                 
+1BE7:                 ;   $COMPILE    ( a -- )
+1BE7:                 ;               Compile next word to code dictionary as a token or literal.
+1BE7:                 
+1BE7: 1BF41BA8                        FDB SCOMP,L2030
+1BEB: 0824434F4D5049  L2040           FCB 8,"$COMPILE"
+1BF4: BD04F9          SCOMP           jsr DOLST
+1BF7: 14BF08CA                        FDB     NAMEQ,QDUP              ;?defined
+1BFB: 05271C13                        FDB     QBRAN,SCOM2
+1BFF: 057004D6800006                  FDB     AT,DOLIT,IMEDD<<8,ANDD  ;?immediate
+1C07: 05271C0F                        FDB     QBRAN,SCOM1
+1C0B: 054E0558                        FDB     EXECU,EXIT              ;its immediate, execute
+1C0F: 187E0558        SCOM1           FDB     COMMA,EXIT              ;its not immediate, compile
+1C13: 082E0E30        SCOM2           FDB     TNUMB,ATEXE             ;try to convert to number
+1C17: 05271C1F                        FDB     QBRAN,SCOM3
+1C1B: 18CF0558                        FDB     LITER,EXIT              ;compile number as integer
+1C1F: 163D            SCOM3           FDB     THROW                   ;error
+1C21:                 
+1C21:                 ;   OVERT       ( -- )
+1C21:                 ;               Link a new word into the current vocabulary.
+1C21:                 
+1C21: 1C2B1BEB                        FDB OVERT,L2040
+1C25: 054F56455254    L2050           FCB 5,"OVERT"
+1C2B: BD04F9          OVERT           jsr DOLST
+1C2E: 08940570086E05                  FDB     LAST,AT,CRRNT,AT,STORE,EXIT
+1C3A:                 
+1C3A:                 ;   ;           ( -- )
+1C3A:                 ;               Terminate a colon definition.
+1C3A:                 
+1C3A: 1C401C25                        FDB SEMIS,L2050
+1C3E: C13B            L2060           FCB IMEDD+COMPO+1,";"
+1C40: BD04F9          SEMIS           jsr DOLST
+1C43: 18B2055816E41C                  FDB     COMPI,EXIT,LBRAC,OVERT,EXIT
+1C4D:                 
+1C4D:                 ;   ]           ( -- )
+1C4D:                 ;               Start compiling the words in the input stream.
+1C4D:                 
+1C4D: 1C531C3E                        FDB RBRAC,L2060
+1C51: 015D            L2070           FCB 1,"]"
+1C53: BD04F9          RBRAC           jsr DOLST
+1C56: 04D61BF4081D05                  FDB     DOLIT,SCOMP,TEVAL,STORE,EXIT
+1C60:                 
+1C60:                 ;   call,       ( ca -- )
+1C60:                 ;               Assemble a call instruction to ca.
+1C60:                 
+1C60: 1C6A1C51                        FDB CALLC,L2070
+1C64: 0563616C6C2C    L2080           FCB 5,"call,"
+1C6A: BD04F9          CALLC           jsr DOLST
+1C6D: 04E7                            FDB     DOCLIT
+1C6F: BD                              FCB     CALLL
+1C70: 0DF2057D                        FDB     HERE,CSTOR      ;Direct Threaded Code
+1C74: 06ED186F                        FDB     ONE,ALLOT
+1C78: 187E0558                        FDB     COMMA,EXIT      ;DTC 6809 extended addr jsr
+1C7C:                 
+1C7C:                 ;   :           ( -- ; <string> )
+1C7C:                 ;               Start a new colon definition using next word as its name.
+1C7C:                 
+1C7C: 1C821C64                        FDB COLON,L2080
+1C80: 013A            L2090           FCB 1,":"
+1C82: BD04F9          COLON           jsr DOLST
+1C85: 13BD1BAC04D604                  FDB     TOKEN,SNAME,DOLIT,DOLST
+1C8D: 1C6A1C530558                    FDB     CALLC,RBRAC,EXIT
+1C93:                 
+1C93:                 ;   IMMEDIATE   ( -- )
+1C93:                 ;               Make the last compiled word an immediate word.
+1C93:                 
+1C93: 1CA11C80                        FDB IMMED,L2090
+1C97: 09494D4D454449  L2100           FCB 9,"IMMEDIATE"
+1CA1: BD04F9          IMMED           jsr DOLST
+1CA4: 04D68000089405                  FDB     DOLIT,IMEDD<<8,LAST,AT,AT,ORR
+1CB0: 08940570056205                  FDB     LAST,AT,STORE,EXIT
+1CB8:                 
+1CB8:                 ;; Defining words
+1CB8:                 
+1CB8:                 ;   USER        ( u -- ; <string> )
+1CB8:                 ;               Compile a new user variable.
+1CB8:                 
+1CB8: 1CC11C97                        FDB USER,L2100
+1CBC: 0455534552      L2110           FCB 4,"USER"
+1CC1: BD04F9          USER            jsr DOLST
+1CC4: 13BD1BAC1C2B                    FDB     TOKEN,SNAME,OVERT
+1CCA:                 ;;;;            FDB     DOLIT,DOLST,CALLC
+1CCA:                 ;;;;            FDB     DOLIT,DOUSE,COMMA
+1CCA:                 ; fast implementation ....
+1CCA: 04D607421C6A                    FDB     DOLIT,FDOUSE,CALLC
+1CD0: 187E0558                        FDB     COMMA,EXIT
+1CD4:                 
+1CD4:                 ;   CREATE      ( -- ; <string> )
+1CD4:                 ;               Compile a new array entry without allocating code space.
+1CD4:                 
+1CD4: 1CDF1CBC                        FDB CREAT,L2110
+1CD8: 06435245415445  L2120           FCB 6,"CREATE"
+1CDF: BD04F9          CREAT           jsr DOLST
+1CE2: 13BD1BAC1C2B                    FDB     TOKEN,SNAME,OVERT
+1CE8:                 ;;;;            FDB     DOLIT,DOLST,CALLC
+1CE8:                 ;;;;            FDB     DOLIT,DOVAR,COMMA,EXIT
+1CE8:                 ; fast implementation ....
+1CE8: 04D6071A1C6A05                  FDB     DOLIT,FDOVAR,CALLC,EXIT
+1CF0:                 
+1CF0:                 ;   VARIABLE    ( -- ; <string> )
+1CF0:                 ;               Compile a new variable initialized to 0.
+1CF0:                 
+1CF0: 1CFD1CD8                        FDB VARIA,L2120
+1CF4: 08564152494142  L2130           FCB 8,"VARIABLE"
+1CFD: BD04F9          VARIA           jsr DOLST
+1D00: 1CDF06E2187E05                  FDB     CREAT,ZERO,COMMA,EXIT
+1D08:                 
+1D08:                 ;   CONSTANT    ( w -- ; <string> )
+1D08:                 ;               Compile a new constant with value w.
+1D08:                 
+1D08: 1D151CF4                        FDB CONST,L2130
+1D0C: 08434F4E535441  L2135           FCB 8,"CONSTANT"
+1D15: BD04F9          CONST           jsr DOLST
+1D18: 13BD1BAC1C2B                    FDB     TOKEN,SNAME,OVERT
+1D1E: 04D606D61C6A                    FDB     DOLIT,DOCONST,CALLC
+1D24: 187E0558                        FDB     COMMA,EXIT
+1D28:                 
+1D28:                 ;; Tools
+1D28:                 
+1D28:                 ;   _TYPE       ( b u -- )
+1D28:                 ;               Display a string. Filter non-printing characters.
+1D28:                 
+1D28: 1D321D0C                        FDB UTYPE,L2135
+1D2C: 055F54595045    L2140           FCB 5,"_TYPE"
+1D32: BD04F9          UTYPE           jsr DOLST
+1D35: 05D2                            FDB     TOR                     ;start count down loop
+1D37: 053E1D45                        FDB     BRAN,UTYP2              ;skip first pass
+1D3B: 0608058C0D1711  UTYP1           FDB     DUPP,CAT,TCHAR,EMIT     ;display only printable
+1D43: 097D                            FDB     PLUS1           ;increment address
+1D45: 05081D3B        UTYP2           FDB     DONXT,UTYP1             ;loop till done
+1D49: 05FC0558                        FDB     DROP,EXIT
+1D4D:                 
+1D4D:                 ;   dm+         ( a u -- a )
+1D4D:                 ;               Dump u bytes from , leaving a+u on the stack.
+1D4D:                 
+1D4D: 1D551D2C                        FDB DUMPP,L2140
+1D51: 03646D2B        L2150           FCB 3,"dm+"
+1D55: BD04F9          DUMPP           jsr DOLST
+1D58: 062A04D6000412                  FDB     OVER,DOLIT,4,UDOTR      ;display address
+1D60: 117B05D2                        FDB     SPACE,TOR               ;start count down loop
+1D64: 053E1D74                        FDB     BRAN,PDUM2              ;skip first pass
+1D68: 0608058C04D600  PDUM1           FDB     DUPP,CAT,DOLIT,3,UDOTR  ;display numeric data
+1D72: 097D                            FDB     PLUS1                   ;increment address
+1D74: 05081D68        PDUM2           FDB     DONXT,PDUM1             ;loop till done
+1D78: 0558                            FDB     EXIT
+1D7A:                 
+1D7A:                 ;   DUMP        ( a u -- )
+1D7A:                 ;               Dump u bytes from a, in a formatted manner.
+1D7A:                 
+1D7A: 1D831D51                        FDB DUMP,L2150
+1D7E: 0444554D50      L2160           FCB 4,"DUMP"
+1D83: BD04F9          DUMP            jsr DOLST
+1D86: 07CB057005D210                  FDB     BASE,AT,TOR,HEX         ;save radix, set hex
+1D8E: 04E7                            FDB     DOCLIT
+1D90: 10                              FCB     16
+1D91: 0BEA                            FDB     SLASH                   ;change count to lines
+1D93: 05D2                            FDB     TOR                     ;start count down loop
+1D95: 11CD04E7        DUMP1           FDB     CR,DOCLIT
+1D99: 10                              FCB     16
+1D9A: 09081D55                        FDB     DDUP,DUMPP              ;display numeric
+1D9E: 08DF08DF                        FDB     ROT,ROT
+1DA2: 06F8118F1D32                    FDB     TWO,SPACS,UTYPE         ;display printable characters
+1DA8: 114809C6                        FDB     NUFQ,INVER              ;user control
+1DAC: 05271DB8                        FDB     QBRAN,DUMP2
+1DB0: 05081D95                        FDB     DONXT,DUMP1             ;loop till done
+1DB4: 053E1DBC                        FDB     BRAN,DUMP3
+1DB8: 05B205FC        DUMP2           FDB     RFROM,DROP              ;cleanup loop stack, early exit
+1DBC: 05FC05B207CB05  DUMP3           FDB     DROP,RFROM,BASE,STORE   ;restore radix
+1DC4: 0558                            FDB     EXIT
+1DC6:                 
+1DC6:                 ;   .S          ( ... -- ... )
+1DC6:                 ;               Display the contents of the data stack.
+1DC6:                 
+1DC6: 1DCD1D7E                        FDB DOTS,L2160
+1DCA: 022E53          L2170           FCB 2,".S"
+1DCD: BD04F9          DOTS            jsr DOLST
+1DD0: 11CD0D3F                        FDB     CR,DEPTH                ;stack depth
+1DD4: 05D2                            FDB     TOR                     ;start count down loop
+1DD6: 053E1DE0                        FDB     BRAN,DOTS2              ;skip first pass
+1DDA: 05C50D5C1272    DOTS1           FDB     RAT,PICK,DOT            ;index stack, display contents
+1DE0: 05081DDA        DOTS2           FDB     DONXT,DOTS1             ;loop till done
+1DE4: 1212                            FDB     DOTQP
+1DE6: 04203C7370                      FCB     4," <sp"
+1DEB: 0558                            FDB     EXIT
+1DED:                 
+1DED:                 ;   !CSP        ( -- )
+1DED:                 ;               Save stack pointer in CSP for error checking.
+1DED:                 
+1DED: 1DF61DCA                        FDB STCSP,L2170
+1DF1: 0421435350      L2180           FCB 4,"!CSP"
+1DF6: BD04F9          STCSP           jsr DOLST
+1DF9: 05E0080E056205                  FDB     SPAT,CSP,STORE,EXIT     ;save pointer
+1E01:                 
+1E01:                 ;   ?CSP        ( -- )
+1E01:                 ;               Abort if stack pointer differs from that saved in CSP.
+1E01:                 
+1E01: 1E0A1DF1                        FDB QCSP,L2180
+1E05: 043F435350      L2190           FCB 4,"?CSP"
+1E0A: BD04F9          QCSP            jsr DOLST
+1E0D: 05E0080E057006                  FDB     SPAT,CSP,AT,XORR        ;compare pointers
+1E15: 168B                            FDB     ABORQ                   ;abort if different
+1E17: 06737461636B73                  FCB     6,"stacks"
+1E1E: 0558                            FDB     EXIT
+1E20:                 
+1E20:                 ;   >NAME       ( ca -- na | F )
+1E20:                 ;               Convert code address to a name address.
+1E20:                 
+1E20: 1E2A1E05                        FDB TNAME,L2190
+1E24: 053E4E414D45    L2200           FCB 5,">NAME"
+1E2A: BD04F9          TNAME           jsr DOLST
+1E2D: 086E                            FDB     CRRNT                   ;vocabulary link
+1E2F: 0CBE057008CA    TNAM1           FDB     CELLP,AT,QDUP           ;check all vocabularies
+1E35: 05271E67                        FDB     QBRAN,TNAM4
+1E39: 0908                            FDB     DDUP
+1E3B: 05700608        TNAM2           FDB     AT,DUPP                 ;?last word in a vocabulary
+1E3F: 05271E53                        FDB     QBRAN,TNAM3
+1E43: 090813F50680                    FDB     DDUP,NAMET,XORR         ;compare
+1E49: 05271E53                        FDB     QBRAN,TNAM3
+1E4D: 0CD2                            FDB     CELLM                   ;continue with next word
+1E4F: 053E1E3B                        FDB     BRAN,TNAM2
+1E53: 061705FC08CA    TNAM3           FDB     SWAP,DROP,QDUP
+1E59: 05271E2F                        FDB     QBRAN,TNAM1
+1E5D: 061705FC061705                  FDB     SWAP,DROP,SWAP,DROP,EXIT
+1E67: 05FC04D6000005  TNAM4           FDB     DROP,DOLIT,0,EXIT
+1E6F:                 
+1E6F:                 ;   .ID         ( na -- )
+1E6F:                 ;               Display the name at address.
+1E6F:                 
+1E6F: 1E771E24                        FDB DOTID,L2200
+1E73: 032E4944        L2210           FCB 3,".ID"
+1E77: BD04F9          DOTID           jsr DOLST
+1E7A: 08CA                            FDB     QDUP                    ;if zero no name
+1E7C: 05271E8B                        FDB     QBRAN,DOTI1
+1E80: 0DDC04E7                        FDB     COUNT,DOCLIT
+1E84: 1F                              FCB     $1F
+1E85: 065D                            FDB     ANDD                    ;mask lexicon bits
+1E87: 1D320558                        FDB     UTYPE,EXIT              ;display name string
+1E8B: 1212            DOTI1           FDB     DOTQP
+1E8D: 09207B6E6F4E61                  FCB     9," {noName}"
+1E97: 0558                            FDB     EXIT
+1E99:                 
+1E99:                 ;   SEE         ( -- ; <string> )
+1E99:                 ;               A simple decompiler.
+1E99:                 
+1E99: 1EA11E73                        FDB SEE,L2210
+1E9D: 03534545        L2220           FCB 3,"SEE"
+1EA1: BD04F9          SEE             jsr DOLST
+1EA4: 1856                            FDB     TICK                    ;starting address
+1EA6: 097D                            FDB     PLUS1                   ;skip JSR
+1EA8:                                                                 ;primitive check ...
+1EA8: 07CB057005D210                  FDB     BASE,AT,TOR,HEX         ;switch to hex base
+1EB0: 0608057004D604                  FDB     DUPP,AT,DOLIT,DOLST,XORR
+1EBA:                                                                 ;high level word?
+1EBA: 05271ED0                        FDB     QBRAN,SEE1              ;yes!
+1EBE: 11CD1212                        FDB     CR,DOTQP                ;primitive word only
+1EC2: 09205052494D49                  FCB     9, " PRIMITVE"          
+1ECC: 053E1FE3                        FDB     BRAN,SEE5               ;exit
+1ED0: 11CD0CBE060812  SEE1            FDB     CR,CELLP,DUPP,UDOT,SPACE
+1EDA: 060805700608                    FDB     DUPP,AT,DUPP            ;?does it contain a zero
+1EE0: 05271EE6                        FDB     QBRAN,SEE2
+1EE4: 1E2A                            FDB     TNAME                   ;?is it a name
+1EE6: 08CA            SEE2            FDB     QDUP                    ;name address or zero
+1EE8: 05271FC5                        FDB     QBRAN,SEE3
+1EEC:                 
+1EEC: 117B1E77                        FDB     SPACE,DOTID             ;display name
+1EF0: 06080570                        FDB     DUPP,AT
+1EF4:                 
+1EF4: 060804D604E70A                  FDB     DUPP,DOLIT,DOCLIT,EQUAL ; doCLIT?
+1EFC: 05271F14                        FDB     QBRAN,SEE21
+1F00: 062A0CBE058C11                  FDB     OVER,CELLP,CAT,SPACE,UDOT ; CLIT: get only single byte
+1F0A: 0617097D0617                    FDB     SWAP,PLUS1,SWAP
+1F10: 053E1FB9                        FDB     BRAN,SEE28
+1F14:                 
+1F14: 060804D604D60A  SEE21           FDB     DUPP,DOLIT,DOLIT,EQUAL  ; doCLIT?
+1F1C: 062A04D605270A                  FDB     OVER,DOLIT,QBRAN,EQUAL,ORR ; ?BRAN ?
+1F26: 062A04D6053E0A                  FDB     OVER,DOLIT,BRAN,EQUAL,ORR; BRANCH ?
+1F30: 062A04D605080A                  FDB     OVER,DOLIT,DONXT,EQUAL,ORR; next ? (from FOR/NEXT)
+1F3A: 062A04D619B40A                  FDB     OVER,DOLIT,DOLOOP,EQUAL,ORR; (LOOP) ?
+1F44: 062A04D619C50A                  FDB     OVER,DOLIT,DOPLOOP,EQUAL,ORR; (+LOOP) ?
+1F4E: 062A04D619A10A                  FDB     OVER,DOLIT,DODO,EQUAL,ORR; (DO) ?
+1F58: 062A04D619470A                  FDB     OVER,DOLIT,DOQDO,EQUAL,ORR; (?DO) ?
+1F62: 062A04D619810A                  FDB     OVER,DOLIT,DOMDO,EQUAL,ORR; (-DO) ?
+1F6C: 05271F82                        FDB     QBRAN,SEE27
+1F70: 06170CBE060805                  FDB     SWAP,CELLP,DUPP,AT,SPACE,UDOT,SWAP ; LIT: get word
+1F7E: 053E1FB9                        FDB     BRAN,SEE28
+1F82:                 SEE27           
+1F82: 060804D612120A                  FDB     DUPP,DOLIT,DOTQP,EQUAL  ; ." ..."
+1F8A: 062A04D6168B0A                  FDB     OVER,DOLIT,ABORQ,EQUAL,ORR ; ABORT" ..."
+1F94: 062A04D612030A                  FDB     OVER,DOLIT,STRQP,EQUAL,ORR ; $" ..."
+1F9E: 05271FBF                        FDB     QBRAN,SEE29             ; last case aalway to SEE29!!
+1FA2: 06170CBE                        FDB     SWAP,CELLP              ; print compiled string
+1FA6: 06080DDC11AD04                  FDB     DUPP,COUNT,TYPES,DOCLIT
+1FAE: 22                              FCB     34
+1FAF: 1136                            FDB     EMIT
+1FB1: 0DDC09B60CD206                  FDB     COUNT,PLUS,CELLM,SWAP   ; adjust continuation address
+1FB9:                 
+1FB9: 05FC            SEE28           FDB     DROP                    ; LEAVL, without EXIT check
+1FBB: 053E1FDD                        FDB     BRAN,SEE4
+1FBF: 05FC            SEE29           FDB     DROP                    ; ELSE
+1FC1: 053E1FCF                        FDB     BRAN,SEE31              ; cleanup, check for EXIT
+1FC5:                 
+1FC5: 06080570125D    SEE3            FDB     DUPP,AT,UDOT            ;display number
+1FCB: 053E1FDD                        FDB     BRAN,SEE4
+1FCF: 0608057004D605  SEE31           FDB     DUPP,AT,DOLIT,EXIT,XORR ; stop on EXIT word
+1FD9:                                                                 ; but not if SEE decompiles itself!
+1FD9: 05271FE3                        FDB     QBRAN,SEE5
+1FDD: 1148            SEE4            FDB     NUFQ                    ;user control
+1FDF: 05271ED0                        FDB     QBRAN,SEE1
+1FE3: 05B207CB056205  SEE5            FDB     RFROM,BASE,STORE,DROP,EXIT
+1FED:                 
+1FED:                 ;   WORDS       ( -- )
+1FED:                 ;               Display the names in the context vocabulary.
+1FED:                 
+1FED: 1FF71E9D                        FDB WORDS,L2220
+1FF1: 05574F524453    L2230           FCB 5,"WORDS"
+1FF7: BD04F9          WORDS           jsr DOLST
+1FFA: 11CD085D0570                    FDB     CR,CNTXT,AT             ;only in context
+2000: 057008CA        WORS1           FDB     AT,QDUP                 ;?at end of list
+2004: 05272018                        FDB     QBRAN,WORS2
+2008: 0608117B1E77                    FDB     DUPP,SPACE,DOTID        ;display a name
+200E: 0CD21148                        FDB     CELLM,NUFQ              ;user control
+2012: 05272000                        FDB     QBRAN,WORS1
+2016: 05FC                            FDB     DROP
+2018: 0558            WORS2           FDB     EXIT
+201A:                 
+201A:                 ;; Hardware reset
+201A:                 
+201A:                 ;   VER         ( -- n )
+201A:                 ;               Return the version number of this implementation.
+201A:                 
+201A: 20221FF1                        FDB VERSN,L2230
+201E: 03564552        L2240           FCB 3,"VER"
+2022: BD04F9          VERSN           jsr DOLST
+2025: 04D601000558                    FDB     DOLIT,VER*256+EXT,EXIT
+202B:                 
+202B:                 ;   hi          ( -- )
+202B:                 ;               Display the sign-on message of eForth.
+202B:                 
+202B: 2032201E                        FDB HI,L2240
+202F: 026869          L2250           FCB 2,"hi"
+2032: BD04F9          HI              jsr DOLST
+2035: 04CA11CD1212                    FDB     STOIO,CR,DOTQP          ;initialize I/O
+203B: 0B65466F727468                  FCB     11,"eForth v"           ;model
+2044: 312E30                          FCB     VER+'0','.',EXT+'0'     ;version
+2047: 11CD0558                        FDB     CR,EXIT
+204B:                 
+204B:                 ;   'BOOT       ( -- a )
+204B:                 ;               The application startup vector.
+204B:                 
+204B: 2055202F                        FDB TBOOT,L2250
+204F: 0527424F4F54    L2260           FCB 5,"'BOOT"
+2055:                 TBOOT
+2055:                 ;;;;            jsr DOLST
+2055:                 ;;;;            FDB     DOVAR
+2055: BD071A                          jsr FDOVAR
+2058: 2032                            FDB     HI                      ;application to boot
+205A:                 
+205A:                 ;   COLD        ( -- )
+205A:                 ;               The hilevel cold start sequence.
+205A:                 
+205A: 2063204F                        FDB COLD,L2260
+205E: 04434F4C44      L2270           FCB 4,"COLD"
+2063: BD04F9          COLD            jsr DOLST               
+2066: 04D6040D04D63F  COLD1           FDB     DOLIT,UZERO,DOLIT,UPP
+206E: 04D6004A0E49                    FDB     DOLIT,ULAST-UZERO,CMOVE ;initialize user area
+2074: 1768                            FDB     PRESE                   ;initialize data stack and TIB
+2076: 20550E30                        FDB     TBOOT,ATEXE             ;application boot
+207A: 08B8085D057006                  FDB     FORTH,CNTXT,AT,DUPP     ;initialize search order
+2082: 086E0DAD1C2B                    FDB     CRRNT,DSTOR,OVERT
+2088:                 ; TEST
+2088:                 ;               FDB     DOLIT,10,DOLIT,1
+2088:                 ;               FDB     DODO
+2088:                 ;
+2088: 1801                            FDB     QUIT                    ;start interpretation
+208A: 053E2066                        FDB     BRAN,COLD1              ;just in case
+208E:                 
+208E:                 ;===============================================================
+208E:                 
+208E:                 LASTN           EQU     L2270                   ;last name address in name dictionary
+208E:                 
+208E:                 NTOP            EQU     NAMEE                   ;next available memory in name dictionary
+208E:                 CTOP            EQU     *                       ;next available memory in code dictionary
+208E:                 
+208E:                 
+208E:                                 END     ORIG
+0 Pass 2 errors.
+
+SYMBOL TABLE
+     ABOR1 02 1696     ABORQ 02 168b     ABORT 02 1679     ABRTQ 02 1b4a
+      ABS1 02 0a35      ABSS 02 0a28     ACAIC 00 c400     ACAID 00 c401
+     ACCEP 02 1591     ACCP1 02 159a     ACCP2 02 15b8     ACCP3 02 15bc
+     ACCP4 02 15c0       AFT 02 1b0b     AGAIN 02 1a9d     AHEAD 02 1ac8
+     ALGND 02 0cfc     ALLOT 02 186f      ANDD 02 065d        AT 02 0570
+     ATEXE 02 0e30     BACK1 02 152a      BASE 02 07cb     BASEE 00 000a
+     BCOMP 02 189d     BDIGS 02 0f62     BEGIN 02 1a63     BKSLA 02 1390
+      BKSP 02 14ff     BKSPP 00 0008    BKSPP2 00 007f     BLANK 02 0d08
+      BRAN 02 053e     BRAN1 02 052f       BYE 02 0488     CALLC 02 1c6a
+     CALLL 00 12bd       CAT 02 058c     CATCH 02 1610     CELLL 00 0002
+     CELLM 02 0cd2     CELLP 02 0cbe     CELLS 02 0ce6    CFAOFF 00 0003
+      CHAR 02 13a6     CHAR1 02 119c     CHAR2 02 119e     CMOVE 02 0e49
+    CMOVE1 02 0e55    CMOVE2 02 0e5b    CMOVE3 02 0e68    CMOVEW 02 0e6c
+   CMOVEW1 02 0e7f   CMOVEW2 02 0e84   CMOVEW3 02 0e8e   CMOVEW4 02 0e96
+     CNTXT 02 085d     CODEE 00 0480      COLD 02 2063     COLD1 02 2066
+     COLDD 00 0400     COLON 02 1c82     COMMA 02 187e     COMPI 02 18b2
+     COMPO 00 0040     CONSO 02 17e9     CONST 02 1d15     COUNT 02 0ddc
+        CP 02 087a        CR 02 11cd     CREAT 02 1cdf       CRR 00 000d
+     CRRNT 02 086e       CSP 02 080e     CSTOR 02 057d      CTOP 02 208e
+       DAT 02 0dc3     DDROP 02 08f6      DDUP 02 0908     DECIM 02 1023
+     DEPTH 02 0d3f     DGTQ1 02 105f       DIG 02 0f8f     DIGIT 02 0f27
+      DIGS 02 0fa3     DIGS1 02 0fa6     DIGS2 02 0fb2     DIGTQ 02 103a
+     DNEGA 02 0a00        DO 02 1917    DOCLIT 02 04e7   DOCONST 02 06d6
+      DODO 02 19a1     DOLIT 02 04d6    DOLOOP 02 19b4     DOLST 02 04f9
+     DOMDO 02 1981    DOMDO1 02 198e     DONXT 02 0508    DOPLO1 02 19e3
+    DOPLOF 02 19d6   DOPLOOP 02 19c5     DOQDO 02 1947    DOQDO1 02 1954
+     DOSTR 02 11e4       DOT 02 1272      DOT1 02 1286     DOTI1 02 1e8b
+     DOTID 02 1e77     DOTO1 02 1710     DOTOK 02 16f9     DOTPR 02 136a
+      DOTQ 02 1b6e     DOTQP 02 1212      DOTR 02 1224      DOTS 02 1dcd
+     DOTS1 02 1dda     DOTS2 02 1de0     DOUSE 02 0733     DOVAR 02 0713
+     DOVOC 02 08a3     DPLUS 02 0691      DROP 02 05fc     DSTOR 02 0dad
+      DSUB 02 06aa     DTRA1 02 0ed6     DTRA2 02 0eec     DTRAI 02 0ecd
+      DUMP 02 1d83     DUMP1 02 1d95     DUMP2 02 1db8     DUMP3 02 1dbc
+     DUMPP 02 1d55      DUPP 02 0608     EDIGS 02 0fd5     ELSEE 02 1b21
+        EM 00 4000      EMIT 02 1136     EQUAL 02 0a3d    EQUAL1 02 0a4a
+       ERR 00 001b      EVAL 02 173e     EVAL1 02 1741     EVAL2 02 1755
+      EXE1 02 0e3d     EXECU 02 054e      EXIT 02 0558     EXPEC 02 15d3
+       EXT 00 0000     EXTRC 02 0f4c  FDOCONST 02 06d6    FDOUSE 02 0742
+    FDOVAR 02 071a      FILE 02 179f      FILL 02 0ea5      FIND 02 1444
+     FIND1 02 145d     FIND2 02 147f     FIND3 02 1487     FIND4 02 1497
+     FIND5 02 14a3     FIND6 02 148b       FOR 02 1a4e     FORTH 02 08b8
+      HAND 02 17bb     HANDL 02 084c      HERE 02 0df2       HEX 02 100b
+        HI 02 2032       HLD 02 083b      HOLD 02 0f76         I 02 05c5
+       IFF 02 1aaf     IMEDD 00 0080     IMMED 02 1ca1       INN 02 07f3
+     INTE1 02 16d2     INTE2 02 16dc     INTER 02 16ab     INVER 02 09c6
+      ISLO 02 17d6       KEY 02 1122      KEY1 02 1125      KTAP 02 154e
+     KTAP1 02 1578     KTAP2 02 157c      L100 02 0484     L1000 02 0d39
+     L1010 02 0d57     L1015 02 0d6d     L1020 02 0d99     L1030 02 0daa
+     L1040 02 0dc0     L1050 02 0dd6     L1060 02 0ded     L1070 02 0dff
+     L1080 02 0e14     L1090 02 0e27      L110 02 048f     L1100 02 0e43
+     L1110 02 0ea0     L1120 02 0ec3     L1130 02 0ef8     L1140 02 0f21
+     L1150 02 0f44     L1160 02 0f5f     L1170 02 0f71     L1180 02 0f8d
+     L1190 02 0fa0      L120 02 04b0     L1200 02 0fb8     L1210 02 0fd2
+     L1220 02 0fea     L1230 02 1007     L1240 02 101b     L1250 02 1033
+     L1260 02 106b     L1270 02 110c     L1280 02 111e     L1290 02 1131
+      L130 02 04c6     L1300 02 1143     L1310 02 1162     L1320 02 1175
+     L1330 02 1188     L1340 02 11a8     L1350 02 11ca     L1360 02 11e0
+     L1370 02 11ff     L1380 02 120e     L1390 02 1221      L140 02 04d0
+     L1400 02 123b      L141 02 04e0     L1410 02 125a     L1420 02 1270
+     L1430 02 1292     L1440 02 12a1     L1450 02 133c     L1460 02 1367
+     L1470 02 137b     L1480 02 138e     L1490 02 13a1      L150 02 04f2
+     L1500 02 13b7     L1510 02 13db     L1520 02 13ef     L1530 02 1404
+     L1540 02 143f     L1550 02 14b9     L1560 02 14fc     L1570 02 1530
+     L1580 02 1549     L1590 02 158a      L160 02 0503     L1600 02 15cc
+     L1610 02 15e6     L1620 02 160a     L1630 02 1637     L1640 02 165e
+     L1650 02 1673     L1660 02 1684     L1670 02 16a0     L1680 02 16e2
+     L1690 02 16f5      L170 02 051f     L1700 02 1718     L1710 02 1739
+     L1720 02 1761     L1730 02 1781     L1740 02 179a     L1750 02 17b6
+     L1760 02 17d2     L1770 02 17e1     L1780 02 17fc     L1790 02 1854
+      L180 02 0537     L1800 02 1869     L1810 02 187c     L1820 02 1893
+     L1830 02 18aa     L1840 02 18c7     L1850 02 18de     L1860 02 18fb
+     L1861 02 1914     L1862 02 1928    L1862A 02 1941    L1862B 02 1962
+    L1862C 02 197b     L1863 02 199c     L1864 02 19ad     L1865 02 19bd
+     L1866 02 19ed     L1867 02 1a13     L1868 02 1a3a     L1870 02 1a4a
+     L1880 02 1a5d     L1890 02 1a6e      L190 02 0546     L1900 02 1a82
+     L1910 02 1a97     L1920 02 1aac     L1930 02 1ac2     L1940 02 1adb
+     L1950 02 1af3     L1960 02 1b07     L1970 02 1b1c     L1980 02 1b30
+     L1990 02 1b43      L200 02 0553     L2000 02 1b59     L2010 02 1b6b
+     L2020 02 1b7d     L2030 02 1ba8     L2040 02 1beb     L2050 02 1c25
+     L2060 02 1c3e     L2070 02 1c51     L2080 02 1c64     L2090 02 1c80
+      L210 02 0560     L2100 02 1c97     L2110 02 1cbc     L2120 02 1cd8
+     L2130 02 1cf4     L2135 02 1d0c     L2140 02 1d2c     L2150 02 1d51
+     L2160 02 1d7e     L2170 02 1dca     L2180 02 1df1     L2190 02 1e05
+      L220 02 056e     L2200 02 1e24     L2210 02 1e73     L2220 02 1e9d
+     L2230 02 1ff1     L2240 02 201e     L2250 02 202f     L2260 02 204f
+     L2270 02 205e      L230 02 057a      L240 02 0589      L250 02 0597
+      L260 02 05a3      L270 02 05af      L279 02 05bc      L280 02 05c2
+      L290 02 05cf      L300 02 05dc      L310 02 05ea      L320 02 05f7
+      L330 02 0604      L340 02 0612      L350 02 0625      L360 02 0634
+      L365 02 0644      L370 02 0659      L380 02 066b      L390 02 067c
+      L391 02 068e      L392 02 06a7      L400 02 06b7      L401 02 06ce
+      L402 02 06e0      L403 02 06eb      L404 02 06f6      L405 02 0701
+      L410 02 070d      L420 02 0720      L430 02 072c      L440 02 074f
+      L450 02 075c      L460 02 0769      L470 02 0778      L480 02 0787
+      L490 02 0798      L500 02 07a6      L510 02 07b5      L520 02 07c6
+      L530 02 07d4      L540 02 07e1      L550 02 07ef      L560 02 07fc
+      L570 02 080a      L580 02 0817      L590 02 0826      L600 02 0837
+      L610 02 0844      L620 02 0855      L630 02 0866      L640 02 0877
+      L650 02 0883      L660 02 088f      L670 02 089d      L680 02 08b2
+      L690 02 08c5      L700 02 08db      L710 02 08f0      L720 02 0903
+      L721 02 0915     L721A 02 0930      L722 02 094b      L723 02 095a
+      L724 02 096a      L725 02 097a      L726 02 098a      L727 02 099a
+      L728 02 09a7      L730 02 09b4      L740 02 09c2      L750 02 09d8
+      L760 02 09f8      L770 02 0a16      L780 02 0a24      L790 02 0a3b
+      L800 02 0a52      L810 02 0a6a      L820 02 0a81      L830 02 0a9a
+      L840 02 0ab5      L845 02 0ad1      L850 02 0b13      L860 02 0b80
+      L870 02 0bc1      L880 02 0bd7      L890 02 0be8      L900 02 0bf9
+     L900A 02 0c1a      L910 02 0c5c      L920 02 0c6b      L930 02 0c8f
+      L940 02 0ca6      L950 02 0cb8      L960 02 0ccc      L970 02 0ce0
+      L975 02 0cf4      L980 02 0d05      L990 02 0d11      LAST 02 0894
+     LASTN 02 205e     LBRAC 02 16e4     LEAVE 02 1a40      LESS 02 0a6c
+     LESS1 02 0a79        LF 00 000a     LITER 02 18cf      LOOP 02 19f2
+     LOOP1 02 1a0b    LSHIFT 02 091c   LSHIFT1 02 0922   LSHIFT2 02 092a
+     MASKK 00 1f7f       MAX 02 0a85      MAX1 02 0a92       MDO 02 1966
+       MIN 02 0a9e      MIN1 02 0aad    MINUS1 02 098d     MMOD1 02 0b9d
+     MMOD2 02 0bab     MMOD3 02 0bbb      MODD 02 0bdb      MONE 02 0704
+     MSMOD 02 0b86     MSTA1 02 0c89     MSTAR 02 0c6e     NAMEE 00 3c00
+     NAMEQ 02 14bf     NAMET 02 13f5     NAMQ1 02 14d0     NAMQ2 02 14d2
+     NAMQ3 02 14f0     NEGAT 02 09df    NEGAT1 02 09f0      NEXT 02 1a73
+     NEXT1 02 0515    NFILL1 02 0eae    NFILL2 02 0eb2    NFILL3 02 0ebb
+        NP 02 0886      NTIB 02 0801      NTOP 00 3c00      NUFQ 02 1148
+     NUFQ1 02 115c     NULLS 02 1664     NUMBQ 02 1073     NUMQ1 02 109a
+     NUMQ2 02 10bc     NUMQ3 02 10ea     NUMQ4 02 10f0     NUMQ5 02 10fa
+     NUMQ6 02 10fc       ONE 02 06ed      ORIG 02 0400       ORR 02 066e
+      OVER 02 062a     OVERT 02 1c2b      PACE 02 1167     PACKS 02 0efe
+       PAD 02 0e03     PAREN 02 137d      PARS 02 12a7     PARS1 02 12c8
+     PARS2 02 12e8     PARS3 02 12ea     PARS4 02 12f0     PARS5 02 1308
+     PARS6 02 131a     PARS7 02 1324     PARS8 02 1330     PARSE 02 1342
+     PDUM1 02 1d68     PDUM2 02 1d74      PICK 02 0d5c     PLOOP 02 1a19
+    PLOOP1 02 1a32      PLUS 02 09b6     PLUS1 02 097d     PNAM1 02 1bdd
+     PRESE 02 1768     PSTOR 02 0d9c     QBRAN 02 0527      QCSP 02 1e0a
+       QDO 02 192c      QDUP 02 08ca     QDUP1 02 08d5      QKEY 02 1111
+       QRX 02 0493      QRX1 02 04a0     QSTAC 02 171f     QUERY 02 15ec
+     QUEST 02 1294      QUIT 02 1801     QUIT1 02 180a     QUIT2 02 180c
+     QUIT3 02 1838     QUIT4 02 184a       RAT 02 05c5     RBRAC 02 1c53
+     RECUR 02 1903     REPEA 02 1ae2     RFROM 02 05b2      ROL1 02 0d85
+      ROL2 02 0d93      ROLL 02 0d72       ROT 02 08df      RPAT 02 059b
+       RPP 00 3f70     RPSTO 02 05a7    RSHIFT 02 0937   RSHIFT1 02 093d
+   RSHIFT2 02 0945       RTS 00 0100     RZERO 02 0760     SAME1 02 1413
+     SAME2 02 1431     SAMEQ 02 140a     SCOM1 02 1c0f     SCOM2 02 1c13
+     SCOM3 02 1c1f     SCOMP 02 1bf4       SEE 02 1ea1      SEE1 02 1ed0
+      SEE2 02 1ee6     SEE21 02 1f14     SEE27 02 1f82     SEE28 02 1fb9
+     SEE29 02 1fbf      SEE3 02 1fc5     SEE31 02 1fcf      SEE4 02 1fdd
+      SEE5 02 1fe3     SEMIS 02 1c40      SIGN 02 0fbd     SIGN1 02 0fcc
+     SLASH 02 0bea  SLASH256 02 095f     SLMOD 02 0bc6     SNAME 02 1bac
+     SPACE 02 117b     SPACS 02 118f      SPAN 02 07e6      SPAT 02 05e0
+       SPP 00 3e60     SPSTO 02 05ee     SSMOD 02 0c95      STAR 02 0c5e
+   STAR256 02 096f     STASL 02 0ca9     STCSP 02 1df6     STOIO 02 04ca
+     STORE 02 0562       STR 02 0fee     STRCQ 02 18e2      STRQ 02 1b5c
+     STRQP 02 1203      SUBB 02 0a18      SWAP 02 0617    SWAPHL 02 094e
+     SZERO 02 0753       TAP 02 1534     TBOOT 02 2055     TCHA1 02 0d33
+     TCHAR 02 0d17     TECHO 02 07ac     TEMIT 02 077e      TEMP 02 07d8
+     TEVAL 02 081d     TEXPE 02 078f     THENN 02 1af8     THROW 02 163d
+       TIB 02 0e18      TIBB 00 3e70       TIC 00 0027      TICK 02 1856
+     TICK1 02 1863     TNAM1 02 1e2f     TNAM2 02 1e3b     TNAM3 02 1e53
+     TNAM4 02 1e67     TNAME 02 1e2a     TNUMB 02 082e     TOKEN 02 13bd
+       TOR 02 05d2     TPROM 02 07bd     TQKEY 02 076f     TRUEE 00 ffff
+      TTAP 02 079d       TWO 02 06f8  TWOSLASH 02 09aa   TWOSTAR 02 099d
+       TX1 02 04b6     TXSTO 02 04b4     TYPE1 02 11b6     TYPE2 02 11be
+     TYPES 02 11ad      UDOT 02 125d     UDOTR 02 123f     ULAST 02 0457
+     ULES1 02 0a62     ULESS 02 0a55      UMM1 02 0b30      UMM2 02 0b62
+      UMM3 02 0b64      UMM4 02 0b70     UMMOD 02 0b1a    UMMOD1 02 0ae2
+    UMMOD2 02 0aef    UMMOD3 02 0af3    UMMOD4 02 0b07   UMMODOV 02 0b02
+     UMST1 02 0c2e     UMST2 02 0c4e     UMSTA 02 0bfd     UNIQ1 02 1ba0
+     UNIQU 02 1b85     UNTIL 02 1a88        UP 02 0723     UPLUS 02 06bb
+       UPP 00 3f80        US 00 0080      USER 02 1cc1    USLASH 02 0ad4
+     UTYP1 02 1d3b     UTYP2 02 1d45     UTYPE 02 1d32    UUMSTA 02 0c1f
+   UUMSTA1 02 0c04   UUMSTA2 02 0c08   UUMSTA3 02 0c0a     UZERO 02 040d
+     VARIA 02 1cfd       VER 00 0001     VERSN 02 2022     VOCSS 00 0008
+     WHILE 02 1b36     WITHI 02 0abc      WORD 02 13e0     WORDS 02 1ff7
+     WORS1 02 2000     WORS2 02 2018       XIO 02 1785      XORR 02 0680
+    ZEQUAL 02 0647   ZEQUAL1 02 0651      ZERO 02 06e2     ZLESS 02 0637
