@@ -4,10 +4,8 @@
 #define nACIA_DEBUG
 
 // Bit definitions for status registers
-
 #define ACIA6850_STATUS_RDRF 0
 #define ACIA6850_STATUS_TDRE 1
-
 
 ACIA6850::ACIA6850(uint8_t usart,unsigned int baseaddress,unsigned int baudrate) {
   
@@ -36,7 +34,6 @@ ACIA6850::ACIA6850(uint8_t usart,unsigned int baseaddress,unsigned int baudrate)
     }
   }
   init();
-  
 }
 
 void ACIA6850::init() {
@@ -44,10 +41,6 @@ void ACIA6850::init() {
   this->txdataregister = 0;
   this->statusregister = (1 << ACIA6850_STATUS_TDRE) ;
   this->controlregister = 0;
-}
-
-void ACIA6850::restart(unsigned int baudrate) {
-  Serial1.begin(baudrate);
 }
 
 void ACIA6850::write(unsigned int address, unsigned int value) {

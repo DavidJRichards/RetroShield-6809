@@ -78,7 +78,7 @@ KY11 operatorconsole(KY11_BASE,1);
 
 #include "ACIA6850.h"
 #define CONSOLE_BASE      0xC400 // ACIA base address
-ACIA6850 console(1,CONSOLE_BASE,9600);
+ACIA6850 console(1,CONSOLE_BASE,115200);
 //M7856 tu58(5,TU58_BASE,9600);
 
 ////////////////////////////////////////////////////////////////////
@@ -1427,17 +1427,20 @@ const unsigned long eprom_length      = 0x00001C9B;
 // #define GPIO?_PDDR    (*(volatile uint32_t *)0x400FF0D4) // Port Data Direction Register
 
 /* Digital Pin Assignments */
-#define SET_DATA_OUT(D) (GPIOD_PDOR = (GPIOD_PDOR & 0xFFFFFF00) | (D))
 
+// read bits raw
+#define xDATA_DIR_IN()      (GPIOD_PDDR = (GPIOD_PDDR & 0xFFFFFF00))
+#define xDATA_DIR_OUT()     (GPIOD_PDDR = (GPIOD_PDDR | 0x000000FF))
+#define SET_DATA_OUT(D) (GPIOD_PDOR = (GPIOD_PDOR & 0xFFFFFF00) | (D))
 #define xDATA_IN        ((byte) (GPIOD_PDIR & 0xFF))
-#define ADDR_H          ((word) (GPIOA_PDIR & 0b1111000000100000))
-#define ADDR_L          ((word) (GPIOC_PDIR & 0b0000111111011111))
-#define ADDR            ((word) (ADDR_H | ADDR_L))
 
 // Teensy has an LED on its digital pin13 (PTC5). which interferes w/
 // level shifters.  So we instead pick-up A5 from PTA5 port and use
 // PTC5 for PG0 purposes.
 //
+#define ADDR_H          ((word) (GPIOA_PDIR & 0b1111000000100000))
+#define ADDR_L          ((word) (GPIOC_PDIR & 0b0000111111011111))
+#define ADDR            ((word) (ADDR_H | ADDR_L))
 
 #define MEGA_PD7  (24)
 #define MEGA_PG0  (13)
@@ -1467,9 +1470,6 @@ const unsigned long eprom_length      = 0x00001C9B;
 #define CLK_Q_HIGH          (GPIOA_PSOR = 0x10000)
 #define CLK_Q_LOW           (GPIOA_PCOR = 0x10000)
 #define STATE_RW_N          ((byte) (GPIOB_PDIR & 0x01) )
-
-#define xDATA_DIR_IN()      (GPIOD_PDDR = (GPIOD_PDDR & 0xFFFFFF00))
-#define xDATA_DIR_OUT()     (GPIOD_PDDR = (GPIOD_PDDR | 0x000000FF))
 
 unsigned long clock_cycle_count;
 
@@ -1574,13 +1574,11 @@ void cpu_tick()
       DATA_OUT = FTDI_Read();
     else 
     if (console.here(uP_ADDR)) {
-      //address_valid = true;
       DATA_OUT = console.read(uP_ADDR);
     } 
     else 
     if (operatorconsole.here(uP_ADDR)) 
     {
-      //address_valid = true;
       DATA_OUT = operatorconsole.read(uP_ADDR);
     }
     
@@ -1613,13 +1611,11 @@ void cpu_tick()
     else
     if (console.here(uP_ADDR)) 
     {
-      //address_valid = true;
       console.write(uP_ADDR,DATA_IN);
     } 
     else    
     if (operatorconsole.here(uP_ADDR)) 
     {
-      //address_valid = true;
       operatorconsole.write(uP_ADDR,DATA_IN);
     }
 
@@ -1684,9 +1680,6 @@ void FTDI_Write(byte x)
   Serial.write(x);
 }
 
-
-////////////////////////////////////////////////////////////////////
-// LCD/Keyboard functions
 ////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////
@@ -1778,6 +1771,51 @@ void process_buttons()
 }
 
 
+// 
+// interruptEventNMI - generates NMI pulse periodically
+////////////////////////////////////////////////////////////////////
+#define CONST_NMI_TIMER_STARTUP_DELAY 1000000
+#define CONST_NMI_TIMER_CYCLE_COUNT 1000
+#define NMI_PULSE_WIDTH 10
+
+inline __attribute__((always_inline))
+void interruptEventNMI()
+{
+  // Set initially to start-up delay so NMI does not
+  // fire immediately before SW has time to setup
+  // any RAM pointers (if used)
+  static long cycleCount = CONST_NMI_TIMER_STARTUP_DELAY;
+
+  cycleCount--;
+  if (cycleCount == 0)
+  {
+    if (digitalRead(uP_NMI_N) == true)     // NMI# was high
+    {
+      // High -> Low edge
+      digitalWrite(uP_NMI_N, LOW);
+      cycleCount = NMI_PULSE_WIDTH;
+      // Serial.print("*");
+    } else {                             // NMI# was low
+      // Low -> High edge
+      digitalWrite(uP_NMI_N, HIGH);
+      cycleCount = CONST_NMI_TIMER_CYCLE_COUNT;      
+      // Serial.print("-");
+    }
+  }
+}
+
+
+
+void FIRQpulse(void)
+{
+//12        digitalWrite(uP_IRQ_N, LOW);
+        digitalWrite(uP_GPIO, HIGH);
+        for(int i=0;i<25;i++) cpu_tick(); 
+        digitalWrite(uP_GPIO, LOW);
+        digitalWrite(uP_IRQ_N, HIGH);
+        
+}
+
 
 ////////////////////////////////////////////////////////////////////
 // Setup
@@ -1819,7 +1857,9 @@ void setup()
 #endif // OLED_DISPLAY
 
   Serial.begin(115200);
+#if outputDEBUG
   Serial1.begin(115200);
+#endif
   while (!Serial);
 
   Serial.write(27);       // ESC command
@@ -1895,7 +1935,7 @@ void setup()
 #ifdef OLED_DISPLAY  
   oled.clear();
 #endif //OLED_DISPLAY  
-  console.restart(9600);
+//  console.restart(9600);
 }
 
 ////////////////////////////////////////////////////////////////////
@@ -1908,6 +1948,7 @@ void loop()
     static int cycles = 0;
 
   word j = 0;
+
   // Loop forever
   //  
   while(1)
@@ -1931,43 +1972,28 @@ void loop()
     }
 
 #if 1
-    if (currentMillis - lastMillis > 1000)
+    if (currentMillis - lastMillis > 100)
     {
+
 #ifdef OLED_DISPLAY      
       char tmp[20];
       oled.home();
-//        oled.println("CPS:");
-//        oled.println(cycles);
-      sprintf(tmp, "A=%04X\n\rD=%02X", uP_ADDR, DATA_OUT);
-      oled.print(tmp);
+      oled.println("CPS:");
+      oled.println(cycles*10);
+//      sprintf(tmp, "A=%04X\n\rD=%02X", uP_ADDR, DATA_OUT);
+//      oled.print(tmp);
 #endif // OLED_DISPLAY    
+      
+#ifdef TM1638_DISPLAY
+      panel_update();
+#endif
       lastMillis = currentMillis;
       cycles = 0;
       //digitalWrite(uP_IRQ_N, HIGH);
     }
 #endif
-
-  // Check for M7856 state changes
-  console.event();
-//  tu58.event();
-    
-#ifdef TM1638_DISPLAY
-  panel_update();
-#endif
-
-    
-  }
-}
-
-
-void FIRQpulse(void)
-{
-//12        digitalWrite(uP_IRQ_N, LOW);
-        digitalWrite(uP_GPIO, HIGH);
-        for(int i=0;i<25;i++) cpu_tick(); 
-        digitalWrite(uP_GPIO, LOW);
-        digitalWrite(uP_IRQ_N, HIGH);
         
+  }
 }
 
 
