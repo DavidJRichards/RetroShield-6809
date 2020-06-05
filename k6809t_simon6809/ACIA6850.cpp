@@ -4,8 +4,11 @@
 #define nACIA_DEBUG
 
 // Bit definitions for status registers
-#define ACIA6850_STATUS_RDRF 0
-#define ACIA6850_STATUS_TDRE 1
+#define ACIA6850_STATUS_RDRF  0
+#define ACIA6850_STATUS_TDRE  1
+#define ACIA6850_NDCD         2
+#define ACIA6850_NCTS         3
+
 
 ACIA6850::ACIA6850(uint8_t usart,unsigned int baseaddress,unsigned int baudrate) {
   
@@ -22,12 +25,12 @@ ACIA6850::ACIA6850(uint8_t usart,unsigned int baseaddress,unsigned int baudrate)
       case 1:
         this->baudrate=baudrate;
         Serial1.begin(baudrate);
-        Serial1.println("Serial 1 initialised");
+        Serial1.println("Serial 1 6850 ACAI initialised");
         break;
       case 5:
         this->baudrate=baudrate;
         Serial5.begin(baudrate);
-        Serial5.println("Serial 5 initialised");
+        Serial5.println("Serial 5 6850 ACAI initialised");
         break;
       default:
         break;
