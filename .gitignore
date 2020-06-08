@@ -50,3 +50,4 @@ ignore
 
 #temporary backup
 * - Copy
+*.bak

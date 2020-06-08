@@ -1,0 +1,3309 @@
+0001                               **************************************************
+0002                               *                                                *
+0003                               *               FORTH for the 6809               *
+0004                               *                                                *
+0005                               *    This version of FORTH was written to be     *
+0006                               *    used as a ROM-able bare bones operating     *
+0007                               *    system for a 6809 based micro-controller.   *
+0008                               *    The high level defintions are based on      *
+0009                               *    Thomas Newman's 8086/88 implementation of   *
+0010                               *    the Forth Interest Group's model in order   *
+0011                               *    to insure the portability of existing       *
+0012                               *    code. All of the primitives were written    *
+0013                               *    during July 1990 by:                        *
+0014                               *                                                *
+0015                               *                    Mike Pashea                 *
+0016                               *          Southern Illinois University          *
+0017                               *          Dept. of Engineering Box 1801         *
+0018                               *          Edwardsville, Il. 62026-1801          *
+0019                               *                  (618)-692-2391                *
+0020                               *                                                *
+0021                               *    This FORTH is direct threaded for speed,    *
+0022                               *    however none of the assembly routines       *
+0023                               *    have been optimized yet. It appears that    *
+0024                               *    all of the bugs have been worked out        *
+0025                               *    though.                                     *
+0026                               *                                                *
+0027                               *    The Forth Interest Group's publications     *
+0028                               *    are public domain and may be obtained       *
+0029                               *    from:                                       *
+0030                               *                                                *
+0031                               *            The Forth Interest Group            *
+0032                               *            P.O. Box 1105                       *
+0033                               *            San Carlos, Ca. 94070               *
+0034                               *                                                *
+0035                               *    The goal of this project has been to get    *
+0036                               *    a small system up and running as quickly    *
+0037                               *    as possible. The following source code      *
+0038                               *    will assemble using the Motorola Freeware   *
+0039                               *    6809 Assembler, with the number of          *
+0040                               *    primitives being kept at a minimum.         *
+0041                               *    Hopefully this will encourage translation   *
+0042                               *    to similar Motorola processors, such as     *
+0043                               *    the 68HC11. I've also commented the         *
+0044                               *    primatives as much as possible to aid in    *
+0045                               *    the translation.                            *
+0046                               *                                                *
+0047                               *    The target system for which this FORTH      *
+0048                               *    was written has the following memory map:   *
+0049                               *                                                *
+0050                               *    0000-0400  A 2k EEPROM  (for saving code)   *
+0051                               *    9800-9801  6850 ACIA    (serial port)       *
+0052                               *    C000-DFFF  An 8k RAM    (FORTH dictionary,  *
+0053                               *                             TIB and stacks)    *
+0054                               *    E000-FFFF  An 8k ROM    (ROMable FORTH)     *
+0055                               *                                                *
+0056                               *    The current target system is being used     *
+0057                               *    to develop other micro-controller systems   *
+0058                               *    with EEPROM. Later hardware versions will   *
+0059                               *    contain some parallel ports for doing data  *
+0060                               *    aquisition and control.                     *
+0061                               *                                                *
+0062                               *    For the moment, there is no editor. In the  *
+0063                               *    current system additional definitions are   *
+0064                               *    written on an IBM PC and saved as an ascii  *
+0065                               *    file. The definitions are then uploaded     *
+0066                               *    through the serial port using Kermit. I     *
+0067                               *    have written an assembler however, and      *
+0068                               *    I'll give it out as soon as the bugs are    *
+0069                               *    fixed.                                      *
+0070                               *                                                *
+0071                               *    FORTH Register Assignments                  *
+0072                               *                                                *
+0073                               *    FORTH  6809     FORTH Preservation Rules    *
+0074                               *    -----  ----     ------------------------    *
+0075                               *                                                *
+0076                               *    IP      Y       INTERPRETER POINTER.        *
+0077                               *                    MUST BE PRESERVED           *
+0078                               *                    ACROSS FORTH WORDS.         *
+0079                               *                                                *
+0080                               *    W       X       WORD POINTER                *
+0081                               *                                                *
+0082                               *    SP      U       PARAMETER STACK POINTER.    *
+0083                               *                    MUST BE PRESERVED ACROSS    *
+0084                               *                    FORTH WORDS.                *
+0085                               *                                                *
+0086                               *    RP      S       RETURN STACK.               *
+0087                               *                    MUST BE PRESERVED ACROSS    *
+0088                               *                    FORTH WORDS.                *
+0089                               *                                                *
+0090                               *           RELEASE AND VERSION NUMBERS          *
+0091                               *                                                *
+0092                               **************************************************
+0093 0001                          FIGREL  EQU   1
+0094 0000                          FIGREV  EQU   0
+0095 0000                          USRVER  EQU   0
+0096                               
+0097                               **************************************************
+0098                               *                                                *
+0099                               *            ASCII CHARACTERS USED               *
+0100                               *                                                *
+0101                               **************************************************
+0102 0020                          ABL     EQU   $0020          ; A blank
+0103 00d0                          ACR     EQU   $00D0          ; A carriage return
+0104 002e                          ADOT    EQU   $002E          ; A period
+0105 0007                          BELL    EQU   $0007          ; A bell (^G)
+0106 005f                          BSIN    EQU   $005F          ; An input delete
+0107 0008                          BSOUT   EQU   $0008          ; A output backspace
+0108 0010                          DLE     EQU   $0010          ; (^P)
+0109 00a0                          LF      EQU   $00A0          ; A line feed
+0110 00c0                          FF      EQU   $00C0          ; A form feed
+0111                               
+0112                               **************************************************
+0113                               *                                                *
+0114                               *               MEMORY ALLOCATION                *
+0115                               *                                                *
+0116                               **************************************************
+0117 2000                          RAMS    EQU   $2000          ; Start of RAM
+0118 4000                          EM      EQU   $4000          ; End of RAM + 1
+0119 0000                          NSCR    EQU   $0000          ; Number of 1024 byte screens
+0120 0080                          KBBUF   EQU   $0080          ; Data bytes per disk buffer
+0121 0040                          US      EQU   $0040          ; User variable space
+0122 00a0                          RTS     EQU   $00A0          ; Return stack and terminal buffer
+0123 0084                          CO      EQU   $0084          ; Data bytes per buffer plus 4
+0124 0000                          NBUF    EQU   $0000          ; Number of buffers
+0125 4000                          BUF1    EQU   $4000          ; First disk buffer
+0126 3fc0                          INITR0  EQU   BUF1-US        ; Base of return stack
+0127 3f20                          INITS0  EQU   INITR0-RTS     ; Base of parameter stack
+0128                               
+0129 ffd0                          ACIAC   EQU   $ffd0          ; ACIA Control
+0130 ffd1                          ACIAD   EQU   $ffd1          ; ACIA Data
+0131                               
+0132                               **************************************************
+0133                               *                                                *
+0134                               *             START OF ROMABLE FORTH             *
+0135                               *                                                *
+0136                               **************************************************
+0137 4000                                  ORG   $4000
+0138 4000 86 03              [ 2 ] ORIG    LDA   #$03           ; Configure the ACIA
+0139 4002 b7 ff d0           [ 5 ]         STA   ACIAC
+0140 4005 86 16              [ 2 ]         LDA   #$16
+0141 4007 b7 ff d0           [ 5 ]         STA   ACIAC
+0142 400a 10 8e 40 19        [ 4 ]         LDY   #ENTRY
+0143 400e 10 ce 3f a0        [ 4 ]         LDS   #$3FA0         ; Initial stack pointers
+0144 4012 ce 3f 20           [ 3 ]         LDU   #$3F20
+0145 4015 ae a1              [ 8 ]         LDX   ,Y++           ; Set up is done, now do FORTH
+0146 4017 6e 91              [ 9 ]         JMP   [,X++]
+0147 4019 4f 2e                    ENTRY   FDB   COLD
+0148                               
+0149                               **************************************************
+0150                               *                                                *
+0151                               *                INITIAL USER TABLE              *
+0152                               *                                                *
+0153                               **************************************************
+0154 401b 20 12                    TOP     FDB   RTASK-7        ; Top word in FORTH vocabulary
+0155 401d 3f 20                    UTABLE  FDB   INITS0         ; Initial parameter stack base
+0156 401f 3f c0                            FDB   INITR0         ; Initial return stack base
+0157 4021 3f 20                            FDB   INITS0         ; Initial TIB
+0158 4023 00 20                            FDB   32             ; Initial WIDTH
+0159 4025 00 00                            FDB   0              ; Initial WARNING
+0160 4027 20 1d                            FDB   INITDP         ; Initial FENCE
+0161 4029 20 1d                            FDB   INITDP         ; Initial DP
+0162 402b 20 0e                            FDB   RFORTH+6       ; Initial VOC-LINK
+0163 402d 3f c0                    UP      FDB   INITR0         ; Initial user area pointer
+0164 402f 3f c0                    RPP     FDB   INITR0         ; Initial return stack pointer
+0165                               
+0166                               **************************************************
+0167                               *                                                *
+0168                               *           START OF THE FORTH DICTIONARY        *
+0169                               *                                                *
+0170                               **************************************************
+0171 4031 83                       DP0     FCB   $83
+0172 4032 4c 49                            FCC   'LI'
+0173 4034 d4                               FCB   $D4            ; 'T'+$80
+0174 4035 00 00                            FDB   $0000          ; LFA of zero indicates start of dictionary
+0175 4037 40 39                    LIT     FDB   *+2
+0176 4039 ec a1              [ 8 ]         LDD   ,Y++           ; Get Literal
+0177 403b 36 06              [ 7 ]         PSHU  D              ; Push to user stack
+0178 403d ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0179 403f 6e 91              [ 9 ]         JMP   [,X++]
+0180                               
+0181 4041 87                               FCB   $87
+0182 4042 45 58 45 43 55 54                FCC   'EXECUT'
+0183 4048 c5                               FCB   $C5
+0184 4049 40 31                            FDB   LIT-6
+0185 404b 40 4d                    EXEC    FDB   *+2
+0186 404d 37 10              [ 7 ]         PULU  X              ; Get CFA from parameter stack
+0187 404f 6e 91              [ 9 ]         JMP   [,X++]         ; Execute NEXT
+0188                               
+0189 4051 86                               FCB   $86
+0190 4052 42 52 41 4e 43                   FCC   'BRANC'
+0191 4057 c8                               FCB   $C8
+0192 4058 40 41                            FDB   EXEC-10
+0193 405a 40 5c                    BRAN    FDB   *+2
+0194 405c ec a4              [ 5 ] BRAN1   LDD   ,Y             ; Get offset value
+0195 405e 31 ab              [ 8 ]         LEAY  D,Y            ; Add offset to instruction pointer
+0196 4060 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0197 4062 6e 91              [ 9 ]         JMP   [,X++]
+0198                               
+0199 4064 87                               FCB   $87
+0200 4065 30 42 52 41 4e 43                FCC   '0BRANC'
+0201 406b c8                               FCB   $C8
+0202 406c 40 51                            FDB   BRAN-9
+0203 406e 40 70                    ZBRAN   FDB   *+2
+0204 4070 37 06              [ 7 ]         PULU  D
+0205 4072 10 83 00 00        [ 5 ]         CMPD  #0             ; Is top of stack zero?
+0206 4076 27 e4              [ 3 ]         BEQ   BRAN1          ; Yes, must branch
+0207 4078 31 22              [ 5 ]         LEAY  2,Y            ; No, skip branch offset
+0208 407a ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0209 407c 6e 91              [ 9 ]         JMP   [,X++]
+0210                               
+0211 407e 86                               FCB   $86
+0212 407f 28 4c 4f 4f 50                   FCC   '(LOOP'
+0213 4084 a9                               FCB   $A9
+0214 4085 40 64                            FDB   ZBRAN-10
+0215 4087 40 89                    XLOOP   FDB   *+2
+0216 4089 cc 00 01           [ 3 ]         LDD   #$0001         ; Assume an increment of 1
+0217 408c e3 e4              [ 6 ] XLOO1   ADDD  0,S            ; Add increment to loop index
+0218 408e ed e4              [ 5 ]         STD   0,S            ; Put the new index on the stack
+0219 4090 10 a3 62           [ 8 ]         CMPD  2,S            ; Compare index with limit
+0220 4093 2d c7              [ 3 ]         BLT   BRAN1          ; Branch if index < limit
+0221 4095 32 64              [ 5 ]         LEAS  4,S            ; Drop the index and the limit
+0222 4097 31 22              [ 5 ]         LEAY  2,Y            ; Skip the branch offset
+0223 4099 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0224 409b 6e 91              [ 9 ]         JMP   [,X++]
+0225                               
+0226 409d 87                               FCB   $87
+0227 409e 28 2b 4c 4f 4f 50                FCC   '(+LOOP'
+0228 40a4 a9                               FCB   $A9
+0229 40a5 40 7e                            FDB   XLOOP-9
+0230 40a7 40 a9                    XPLOO   FDB   *+2
+0231 40a9 37 06              [ 7 ]         PULU  D              ; Get the increment value
+0232 40ab 20 df              [ 3 ]         BRA   XLOO1          ; Go do loop
+0233                               
+0234 40ad 84                               FCB   $84
+0235 40ae 28 44 4f                         FCC   '(DO'
+0236 40b1 a9                               FCB   $A9
+0237 40b2 40 9d                            FDB   XPLOO-10
+0238 40b4 40 b6                    XDO     FDB   *+2
+0239 40b6 37 16              [ 9 ]         PULU  D,X            ; Get initial index and limit values
+0240 40b8 34 16              [ 9 ]         PSHS  X,D            ; Push to system stack
+0241 40ba ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0242 40bc 6e 91              [ 9 ]         JMP   [,X++]
+0243                               
+0244 40be 81                               FCB   $81
+0245 40bf c9                               FCB   $C9
+0246 40c0 40 ad                            FDB   XDO-7
+0247 40c2 40 c4                    IDO     FDB   *+2
+0248 40c4 ec e4              [ 5 ]         LDD   0,S            ; Get the index
+0249 40c6 36 06              [ 7 ]         PSHU  D              ; Push it to the parameter stack
+0250 40c8 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0251 40ca 6e 91              [ 9 ]         JMP   [,X++]
+0252                               
+0253 40cc 85                               FCB   $85
+0254 40cd 44 49 47 49                      FCC   'DIGI'
+0255 40d1 d4                               FCB   $D4
+0256 40d2 40 be                            FDB   IDO-4
+0257 40d4 40 d6                    DIGIT   FDB   *+2
+0258 40d6 4f                 [ 2 ]         CLRA                 ; Clear high byte
+0259 40d7 e6 43              [ 5 ]         LDB   3,U            ; Ascii digit is low byte of 2nd on the stack
+0260 40d9 c0 30              [ 2 ]         SUBB  #$30           ; Convert to binary
+0261 40db 25 1b              [ 3 ]         BLO   DIGI2          ; Not a number
+0262 40dd c1 0a              [ 2 ]         CMPB  #$0A           ; Ascii 0-9?
+0263 40df 25 0a              [ 3 ]         BLO   DIGI1          ; Yes, check against base
+0264 40e1 c1 11              [ 2 ]         CMPB  #$11           ; Ascii A-Z?
+0265 40e3 25 13              [ 3 ]         BLO   DIGI2          ; No, less than 'A'
+0266 40e5 c1 2a              [ 2 ]         CMPB  #$2A
+0267 40e7 22 0f              [ 3 ]         BHI   DIGI2          ; No, greater than 'Z'
+0268 40e9 c0 07              [ 2 ]         SUBB  #7             ; Legal letter - convert to binary
+0269 40eb e1 41              [ 5 ] DIGI1   CMPB  1,U            ; Compare number to base (on top of stack)
+0270                               
+0271 40ed 24 09              [ 3 ]                 BHS   DIGI2          ; Error if greater than or equal
+0272 40ef ed 42              [ 6 ]         STD   2,U            ; No error leave number on the stack
+0273 40f1 cc 00 01           [ 3 ]         LDD   #1             ; True flag
+0274 40f4 ed c4              [ 5 ]         STD   0,U            ; Put flag on top of stack
+0275 40f6 20 07              [ 3 ]         BRA   DIGI3          ; NEXT
+0276 40f8 33 42              [ 5 ] DIGI2   LEAU  2,U            ; Adjust stack
+0277 40fa cc 00 00           [ 3 ]         LDD   #0             ; False flag
+0278 40fd ed c4              [ 5 ]         STD   0,U            ; Put it on the stack
+0279 40ff ae a1              [ 8 ] DIGI3   LDX   ,Y++           ; NEXT
+0280 4101 6e 91              [ 9 ]         JMP   [,X++]
+0281                               
+0282 4103 86                               FCB   $86
+0283 4104 28 46 49 4e 44                   FCC   '(FIND'
+0284 4109 a9                               FCB   $A9
+0285 410a 40 cc                            FDB   DIGIT-8
+0286 410c 41 0e                    PFIND   FDB   *+2
+0287 410e 34 20              [ 7 ]         PSHS  Y              ; Save IP
+0288 4110 37 10              [ 7 ]         PULU  X              ; LFA of first word in the dictionary search
+0289 4112 10 ae c4           [ 6 ] PFIN1   LDY   0,U            ; Location of packed string (HERE)
+0290 4115 e6 84              [ 4 ]         LDB   0,X            ; Get dictionary word length
+0291 4117 1f 98              [ 6 ]         TFR   B,A            ; Save the length byte temporarily
+0292 4119 c4 3f              [ 2 ]         ANDB  #$3F           ; Mask off the two highest bits
+0293 411b e1 a4              [ 4 ]         CMPB  0,Y            ; Compare it with the packed string
+0294 411d 26 24              [ 3 ]         BNE   PFIN5          ; Lengths don't match - get another word
+0295 411f 30 01              [ 5 ] PFIN2   LEAX  1,X            ; OK so far - look at the text
+0296 4121 31 21              [ 5 ]         LEAY  1,Y            ;
+0297 4123 e6 84              [ 4 ]         LDB   0,X            ; Get next character
+0298 4125 e1 a4              [ 4 ]         CMPB  0,Y            ; Compare with packed string
+0299 4127 27 f6              [ 3 ]         BEQ   PFIN2          ; OK so far - go on to next character
+0300 4129 c4 7f              [ 2 ]         ANDB  #$7F           ; Doesn't match - toggle high bit
+0301 412b e1 a4              [ 4 ]         CMPB  0,Y            ; Try again
+0302 412d 26 16              [ 3 ]         BNE   PFIN6          ; Doesn't match - go get next word
+0303 412f 30 05              [ 5 ] PFIN3   LEAX  5,X            ; We have an exact match - get PFA
+0304 4131 1f 89              [ 6 ]         TFR   A,B            ; Retrieve length byte
+0305 4133 4f                 [ 2 ]         CLRA                 ; D now contains the string length byte
+0306 4134 af c4              [ 5 ]         STX   0,U            ; Replace location of packed string with PFA
+0307 4136 8e 00 01           [ 3 ]         LDX   #1             ; Boolean TRUE flag
+0308 4139 36 06              [ 7 ]         PSHU  D              ; Put string length on the stack
+0309 413b 36 10              [ 7 ]         PSHU  X              ; Put boolean flag on the stack
+0310 413d 35 20              [ 7 ] PFIN4   PULS  Y              ; Restore IP
+0311 413f ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0312 4141 6e 91              [ 9 ]         JMP   [,X++]
+0313 4143 30 01              [ 5 ] PFIN5   LEAX  1,X            ; Skip character count
+0314 4145 6d 80              [ 8 ] PFIN6   TST   0,X+           ; Test sign bit
+0315 4147 2a fc              [ 3 ]         BPL   PFIN6          ; Keep looking - sign bit is not set
+0316 4149 ae 84              [ 5 ] PFIN7   LDX   0,X            ; Get LFA
+0317 414b 8c 00 00           [ 4 ]         CMPX  #0             ; If zero we're at the end of the dictionary
+0318 414e 26 c2              [ 3 ]         BNE   PFIN1          ; Look at next word - LFA in X
+0319 4150 af c4              [ 5 ]         STX   0,U            ; Put a boolean false on the stack
+0320 4152 20 e9              [ 3 ]         BRA   PFIN4          ; NEXT
+0321                               
+0322 4154 87                               FCB   $87
+0323 4155 45 4e 43 4c 4f 53                FCC   'ENCLOS'
+0324 415b c5                               FCB   $C5
+0325 415c 41 03                            FDB   PFIND-9
+0326 415e 41 60                    ENCL    FDB   *+2
+0327 4160 34 20              [ 7 ]         PSHS  Y              ; Save the IP
+0328 4162 37 06              [ 7 ]         PULU  D              ; Terminator character is now in B
+0329 4164 ae c4              [ 5 ]         LDX   0,U            ; Get starting address, but keep it on the stack
+0330 4166 10 8e ff ff        [ 4 ]         LDY   #-1            ; Set counter
+0331 416a 30 1f              [ 5 ]         LEAX  -1,X           ; Decrement starting address
+0332 416c 31 21              [ 5 ] ENCL1   LEAY  1,Y            ; Increment counter
+0333 416e 30 01              [ 5 ]         LEAX  1,X            ; Increment address
+0334 4170 e1 84              [ 4 ]         CMPB  0,X            ; Is character a terminator?
+0335 4172 27 f8              [ 3 ]         BEQ   ENCL1          ; Yes, continue looking
+0336 4174 36 20              [ 7 ]         PSHU  Y              ; Character must be text, so push count offset
+0337 4176 6d 84              [ 6 ]         TST   0,X            ; Is the character a NULL?
+0338 4178 26 06              [ 3 ]         BNE   ENCL2          ; No, continue
+0339 417a 1f 21              [ 6 ]         TFR   Y,X            ; Copy counter
+0340 417c 31 21              [ 5 ]         LEAY  1,Y            ; Increment counter
+0341 417e 20 14              [ 3 ]         BRA   ENCL5          ; Do the push, get IP and do NEXT
+0342 4180 31 21              [ 5 ] ENCL2   LEAY  1,Y            ; Increment counter
+0343 4182 30 01              [ 5 ]         LEAX  1,X            ; Increment address
+0344 4184 e1 84              [ 4 ]         CMPB  0,X            ; Is the character a terminator?
+0345 4186 27 08              [ 3 ]         BEQ   ENCL4          ; Yes, finish up
+0346 4188 6d 84              [ 6 ]         TST   0,X            ; No, is it a NULL?
+0347 418a 26 f4              [ 3 ]         BNE   ENCL2          ; No, continue looking
+0348 418c 1f 21              [ 6 ] ENCL3   TFR   Y,X            ; Counters are equal
+0349 418e 20 04              [ 3 ]         BRA   ENCL5          ; Do the push
+0350 4190 1f 21              [ 6 ] ENCL4   TFR   Y,X            ; Copy counter
+0351 4192 30 01              [ 5 ]         LEAX  1,X            ; Increment the counter
+0352 4194 36 30              [ 9 ] ENCL5   PSHU  Y,X            ; Do the push
+0353 4196 35 20              [ 7 ]         PULS  Y              ; Restore IP
+0354 4198 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0355 419a 6e 91              [ 9 ]         JMP   [,X++]
+0356                               
+0357 419c 84                               FCB   $84
+0358 419d 45 4d 49                         FCC   'EMI'
+0359 41a0 d4                               FCB   $D4
+0360 41a1 41 54                            FDB   ENCL-10
+0361 41a3 44 e4                    EMIT    FDB   DOCOL
+0362 41a5 51 a6                            FDB   PEMIT
+0363 41a7 45 61                            FDB   ONE
+0364 41a9 46 3f                            FDB   OUTT
+0365 41ab 44 40                            FDB   PSTOR
+0366 41ad 43 0d                            FDB   SEMIS
+0367                               
+0368 41af 83                               FCB   $83
+0369 41b0 4b 45                            FCC   'KE'
+0370 41b2 d9                               FCB   $D9
+0371 41b3 41 9c                            FDB   EMIT-7
+0372 41b5 44 e4                    KEY     FDB   DOCOL
+0373 41b7 51 7b                            FDB   PKEY
+0374 41b9 43 0d                            FDB   SEMIS
+0375                               
+0376 41bb 89                               FCB   $89
+0377 41bc 3f 54 45 52 4d 49                FCC   '?TERMINA'
+     4e 41
+0378 41c4 cc                               FCB   $CC
+0379 41c5 41 af                            FDB   KEY-6
+0380 41c7 44 e4                    QTERM   FDB   DOCOL
+0381 41c9 51 8d                            FDB   PQTER
+0382 41cb 43 0d                            FDB   SEMIS
+0383                               
+0384 41cd 82                               FCB   $82
+0385 41ce 43                               FCC   'C'
+0386 41cf d2                               FCB   $D2
+0387 41d0 41 bb                            FDB   QTERM-12
+0388 41d2 44 e4                    CR      FDB   DOCOL
+0389 41d4 40 37                            FDB   LIT
+0390 41d6 00 0d                            FDB   $0D
+0391 41d8 51 a6                            FDB   PEMIT
+0392 41da 40 37                            FDB   LIT
+0393 41dc 00 0a                            FDB   $0A
+0394 41de 51 a6                            FDB   PEMIT
+0395 41e0 43 0d                            FDB   SEMIS
+0396                               
+0397 41e2 85                               FCB   $85
+0398 41e3 43 4d 4f 56                      FCC   'CMOV'
+0399 41e7 c5                               FCB   $C5
+0400 41e8 41 cd                            FDB   CR-5
+0401 41ea 41 ec                    CMOVE   FDB   *+2
+0402 41ec 34 20              [ 7 ]         PSHS  Y              ; Save the instruction pointer
+0403 41ee 37 06              [ 7 ]         PULU  D              ; Get the count
+0404 41f0 e3 c4              [ 6 ]         ADDD  0,U            ; Add it to the destination address
+0405 41f2 37 30              [ 9 ]         PULU  X,Y            ; Destination in X, Source in Y
+0406 41f4 36 06              [ 7 ]         PSHU  D              ; Put final destination addr. on stack
+0407 41f6 a6 a0              [ 6 ] CMOV1   LDA   ,Y+            ; Do the move
+0408 41f8 a7 80              [ 6 ]         STA   ,X+
+0409 41fa ac c4              [ 6 ]         CMPX  0,U            ; At the final destination?
+0410 41fc 2d f8              [ 3 ]         BLT   CMOV1          ; If not, continue
+0411 41fe 33 42              [ 5 ]         LEAU  2,U            ; Drop final destination from the stack
+0412 4200 35 20              [ 7 ]         PULS  Y              ; Restore the instruction pointer
+0413 4202 ae a1              [ 8 ]         LDX   ,Y++           ; NEX
+0414 4204 6e 91              [ 9 ]         JMP   [,X++]
+0415                               
+0416 4206 82                               FCB   $82
+0417 4207 55                               FCC   'U'
+0418 4208 aa                               FCB   $AA
+0419 4209 41 e2                            FDB   CMOVE-8
+0420 420b 42 0d                    USTAR   FDB   *+2            ; Unsigned multiplication subroutine
+0421 420d ec c4              [ 5 ]         LDD   0,U            ; Get OP2
+0422 420f ed 7e              [ 6 ]         STD   -2,S           ; Save it just below the return stack
+0423 4211 ec 42              [ 6 ]         LDD   2,U            ; Get OP1
+0424 4213 ed 7c              [ 6 ]         STD   -4,S           ; Save it also
+0425 4215 6f c4              [ 6 ]         CLR   0,U            ; Clear high order word
+0426 4217 6f 41              [ 7 ]         CLR   1,U            ;
+0427 4219 a6 7d              [ 5 ]         LDA   -3,S           ; Get OP1 low byte
+0428 421b e6 7f              [ 5 ]         LDB   -1,S           ; Get OP2 low byte
+0429 421d 3d                 [11 ]         MUL                  ; Multiply
+0430 421e ed 42              [ 6 ]         STD   2,U            ; Save the first partial product on the stack
+0431 4220 a6 7c              [ 5 ]         LDA   -4,S           ; Get OP1 high byte
+0432 4222 e6 7f              [ 5 ]         LDB   -1,S           ; Get OP2 low byte
+0433 4224 3d                 [11 ]         MUL                  ; Multiply
+0434 4225 e3 41              [ 7 ]         ADDD  1,U            ; Add to first partial product
+0435 4227 ed 41              [ 6 ]         STD   1,U            ; And update
+0436 4229 a6 7d              [ 5 ]         LDA   -3,S           ; Get OP1 low byte
+0437 422b e6 7e              [ 5 ]         LDB   -2,S           ; Get OP2 high byte
+0438 422d 3d                 [11 ]         MUL                  ; Multiply
+0439 422e e3 41              [ 7 ]         ADDD  1,U            ; Add to second partial product
+0440 4230 ed 41              [ 6 ]         STD   1,U            ; And update
+0441 4232 24 02              [ 3 ]         BCC   NOCARY         ; Check for a carry into high byte
+0442 4234 6c c4              [ 6 ]         INC   0,U            ; Add carry if neccesary
+0443 4236 a6 7c              [ 5 ] NOCARY  LDA   -4,S           ; Get OP1 high byte
+0444 4238 e6 7e              [ 5 ]         LDB   -2,S           ; Get OP2 high byte
+0445 423a 3d                 [11 ]         MUL                  ; Multply
+0446 423b e3 c4              [ 6 ]         ADDD  0,U            ; Add to third partial product
+0447 423d ed c4              [ 5 ]         STD   0,U            ; And update - Result is on stack
+0448 423f ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0449 4241 6e 91              [ 9 ]         JMP   [,X++]
+0450                               
+0451 4243 82                               FCB   $82
+0452 4244 55                               FCC   'U'
+0453 4245 af                               FCB   $AF
+0454 4246 42 06                            FDB   USTAR-5
+0455 4248 42 4a                    USLAS   FDB   *+2            ; 32 by 16 unsigned division routine
+0456 424a ec c4              [ 5 ]         LDD   0,U            ; Get divisor
+0457 424c 10 83 00 00        [ 5 ]         CMPD  #0             ; Check for a divide by zero
+0458 4250 26 0b              [ 3 ]         BNE   USLA1          ; OK - continue
+0459 4252 cc ff ff           [ 3 ]         LDD   #-1            ; Trap a divide by zero
+0460 4255 33 46              [ 5 ]         LEAU  6,U            ; Drop all data from stack
+0461 4257 36 06              [ 7 ]         PSHU  D              ; Set flags
+0462 4259 36 06              [ 7 ]         PSHU  D              ;
+0463 425b 20 27              [ 3 ]         BRA   USLA4          ; NEXT
+0464 425d 86 20              [ 2 ] USLA1   LDA   #32            ; Set counter for 32 bit division
+0465 425f 36 02              [ 6 ]         PSHU  A              ; 0,U is the counter - 1,U is the divisor
+0466 4261 ec 43              [ 6 ]         LDD   3,U            ; 3,U and 5,U are the high and low words of
+0467 4263 4f                 [ 2 ]         CLRA                 ; the dividend
+0468 4264 5f                 [ 2 ]         CLRB                 ;
+0469 4265 68 46              [ 7 ] USLA2   ASL   6,U            ; Shift dividend and quotient
+0470 4267 69 45              [ 7 ]         ROL   5,U
+0471 4269 69 44              [ 7 ]         ROL   4,U
+0472 426b 69 43              [ 7 ]         ROL   3,U
+0473 426d 59                 [ 2 ]         ROLB                 ; Shift dividend into D register
+0474 426e 49                 [ 2 ]         ROLA
+0475 426f 10 a3 41           [ 8 ]         CMPD  1,U            ; Is dividend greater than the divisor?
+0476 4272 25 04              [ 3 ]         BLO   USLA3          ; No, skip subtraction
+0477 4274 a3 41              [ 7 ]         SUBD  1,U            ; Yes, do subtraction
+0478 4276 6c 46              [ 7 ]         INC   6,U            ; Increment low byte quotient
+0479 4278 6a c4              [ 6 ] USLA3   DEC   0,U            ; Decrement counter
+0480 427a 26 e9              [ 3 ]         BNE   USLA2          ; Loop for a non-zero count
+0481 427c ae 45              [ 6 ]         LDX   5,U            ; Now the remainder is in D, the quotient is at 5,U
+0482 427e 33 47              [ 5 ]         LEAU  7,U            ; Drop data on the stack
+0483 4280 36 06              [ 7 ]         PSHU  D              ; Push remainder
+0484 4282 36 10              [ 7 ]         PSHU  X              ; Push quotient
+0485 4284 ae a1              [ 8 ] USLA4   LDX   ,Y++           ; NEXT
+0486 4286 6e 91              [ 9 ]         JMP   [,X++]
+0487                               
+0488 4288 83                               FCB   $83
+0489 4289 41 4e                            FCC   'AN'
+0490 428b c4                               FCB   $C4
+0491 428c 42 43                            FDB   USLAS-5
+0492 428e 42 90                    ANDD    FDB   *+2
+0493 4290 37 06              [ 7 ]         PULU  D              ; Get top of stack
+0494 4292 a4 c4              [ 4 ]         ANDA  0,U            ; AND high order byte
+0495 4294 e4 41              [ 5 ]         ANDB  1,U            ; AND low order byte
+0496 4296 ed c4              [ 5 ]         STD   0,U            ; Leave result on stack
+0497 4298 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0498 429a 6e 91              [ 9 ]         JMP   [,X++]
+0499                               
+0500 429c 82                               FCB   $82
+0501 429d 4f                               FCC   'O'
+0502 429e d2                               FCB   $D2
+0503 429f 42 88                            FDB   ANDD-6
+0504 42a1 42 a3                    ORR     FDB   *+2
+0505 42a3 37 06              [ 7 ]         PULU  D              ; Get top of stack
+0506 42a5 aa c4              [ 4 ]         ORA   0,U            ; OR high order byte
+0507 42a7 ea 41              [ 5 ]         ORB   1,U            ; OR low order byte
+0508 42a9 ed c4              [ 5 ]         STD   0,U            ; Leave result on stack
+0509 42ab ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0510 42ad 6e 91              [ 9 ]         JMP   [,X++]
+0511                               
+0512 42af 83                               FCB   $83
+0513 42b0 58 4f                            FCC   'XO'
+0514 42b2 d2                               FCB   $D2
+0515 42b3 42 9c                            FDB   ORR-5
+0516 42b5 42 b7                    XORR    FDB   *+2
+0517 42b7 37 06              [ 7 ]         PULU  D              ; Get top stack
+0518 42b9 a8 c4              [ 4 ]         EORA  0,U            ; XOR high order byte
+0519 42bb e8 41              [ 5 ]         EORB  1,U            ; XOR low order byte
+0520 42bd ed c4              [ 5 ]         STD   0,U            ; Leave result on stack
+0521 42bf ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0522 42c1 6e 91              [ 9 ]         JMP   [,X++]
+0523                               
+0524 42c3 83                               FCB   $83
+0525 42c4 53 50                            FCC   'SP'
+0526 42c6 c0                               FCB   $C0
+0527 42c7 42 af                            FDB   XORR-6
+0528 42c9 42 cb                    SPAT    FDB   *+2
+0529 42cb 1f 30              [ 6 ]         TFR   U,D            ; Get current parameter stack pointer
+0530 42cd 36 06              [ 7 ]         PSHU  D              ; Put it on the stack
+0531 42cf ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0532 42d1 6e 91              [ 9 ]         JMP   [,X++]
+0533                               
+0534 42d3 83                               FCB   $83
+0535 42d4 53 50                            FCC   'SP'
+0536 42d6 a1                               FCB   $A1
+0537 42d7 42 c3                            FDB   SPAT-6
+0538 42d9 42 db                    SPSTO   FDB   *+2
+0539 42db be 40 2d           [ 6 ]         LDX   UP             ; Initial user pointer
+0540 42de 30 06              [ 5 ]         LEAX  6,X            ; Point to location in user table
+0541 42e0 ee 84              [ 5 ]         LDU   0,X            ; Get parameter stack pointer
+0542 42e2 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0543 42e4 6e 91              [ 9 ]         JMP   [,X++]
+0544                               
+0545 42e6 83                               FCB   $83
+0546 42e7 52 50                            FCC   'RP'
+0547 42e9 c0                               FCB   $C0
+0548 42ea 42 d3                            FDB   SPSTO-6
+0549 42ec 42 ee                    RPAT    FDB   *+2
+0550 42ee 36 40              [ 7 ]         PSHU  S              ; Get current return stack pointer
+0551 42f0 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0552 42f2 6e 91              [ 9 ]         JMP   [,X++]
+0553                               
+0554 42f4 83                               FCB   $83
+0555 42f5 52 50                            FCC   'RP'
+0556 42f7 a1                               FCB   $A1
+0557 42f8 42 e6                            FDB   RPAT-6
+0558 42fa 42 fc                    RPSTO   FDB   *+2
+0559 42fc be 40 2d           [ 6 ]         LDX   UP             ; Initial user pointer
+0560 42ff 30 08              [ 5 ]         LEAX  8,X            ; Point to location in user table
+0561 4301 10 ee 84           [ 6 ]         LDS   0,X            ; Get return stack pointer
+0562 4304 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0563 4306 6e 91              [ 9 ]         JMP   [,X++]
+0564                               
+0565 4308 82                               FCB   $82
+0566 4309 3b                               FCC   ';'
+0567 430a d3                               FCB   $D3
+0568 430b 42 f4                            FDB   RPSTO-6
+0569 430d 43 0f                    SEMIS   FDB   *+2
+0570 430f 35 20              [ 7 ]         PULS  Y              ; Fetch old IP
+0571 4311 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0572 4313 6e 91              [ 9 ]         JMP   [,X++]
+0573                               
+0574 4315 85                               FCB   $85
+0575 4316 4c 45 41 56                      FCC   'LEAV'
+0576 431a c5                               FCB   $C5
+0577 431b 43 08                            FDB   SEMIS-5
+0578 431d 43 1f                    LEAVE   FDB   *+2
+0579 431f ec e4              [ 5 ]         LDD   0,S            ; Get index
+0580 4321 ed 62              [ 6 ]         STD   2,S            ; Store at limit
+0581 4323 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0582 4325 6e 94              [ 6 ]         JMP   [0,X]
+0583                               
+0584 4327 82                               FCB   $82
+0585 4328 3e                               FCC   '>'
+0586 4329 d2                               FCB   $D2
+0587 432a 43 15                            FDB   LEAVE-8
+0588 432c 43 2e                    TOR     FDB   *+2
+0589 432e 37 06              [ 7 ]         PULU  D              ; Get top of parameter stack
+0590 4330 34 06              [ 7 ]         PSHS  D              ; Push it to the return stack
+0591 4332 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0592 4334 6e 91              [ 9 ]         JMP   [,X++]
+0593                               
+0594 4336 82                               FCB   $82
+0595 4337 52                               FCC   'R'
+0596 4338 be                               FCB   $BE
+0597 4339 43 27                            FDB   TOR-5
+0598 433b 43 3d                    FROMR   FDB   *+2
+0599 433d 35 06              [ 7 ]         PULS  D              ; Get top of return stack
+0600 433f 36 06              [ 7 ]         PSHU  D              ; Push it to the parameter stack
+0601 4341 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0602 4343 6e 91              [ 9 ]         JMP   [,X++]
+0603                               
+0604 4345 81                               FCB   $81
+0605 4346 d2                               FCB   $D2
+0606 4347 43 36                            FDB   FROMR-5
+0607 4349 40 c4                    RR      FDB   IDO+2          ; Does the same as I
+0608                               
+0609 434b 82                               FCB   $82
+0610 434c 30                               FCC   '0'
+0611 434d bd                               FCB   $BD
+0612 434e 43 45                            FDB   RR-4
+0613 4350 43 52                    ZEQU    FDB   *+2
+0614 4352 37 06              [ 7 ]         PULU  D              ; Get top of stack
+0615 4354 8e 00 01           [ 3 ]         LDX   #1             ; Assume TRUE
+0616 4357 10 83 00 00        [ 5 ]         CMPD  #0             ; Compare to zero
+0617 435b 27 02              [ 3 ]         BEQ   ZEQ1           ; See if assumtion is correct
+0618 435d 30 1f              [ 5 ]         LEAX  -1,X           ; No, it is FALSE
+0619 435f 36 10              [ 7 ] ZEQ1    PSHU  X              ; Leave flag
+0620 4361 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0621 4363 6e 91              [ 9 ]         JMP   [,X++]
+0622                               
+0623 4365 82                               FCB   $82
+0624 4366 30                               FCC   '0'
+0625 4367 bc                               FCB   $BC
+0626 4368 43 4b                            FDB   ZEQU-5
+0627 436a 43 6c                    ZLESS   FDB   *+2
+0628 436c 37 06              [ 7 ]         PULU  D              ; Get top of stack
+0629 436e 8e 00 01           [ 3 ]         LDX   #1             ; Assume TRUE
+0630 4371 10 83 00 00        [ 5 ]         CMPD  #0             ; Compare to zero
+0631 4375 2d 02              [ 3 ]         BLT   ZLESS1         ; Check assumption
+0632 4377 30 1f              [ 5 ]         LEAX  -1,X           ; No, it is FALSE
+0633 4379 36 10              [ 7 ] ZLESS1  PSHU  X              ; Leave flag
+0634 437b ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0635 437d 6e 91              [ 9 ]         JMP   [,X++]
+0636                               
+0637 437f 81                               FCB   $81
+0638 4380 ab                               FCB   $AB
+0639 4381 43 65                            FDB   ZLESS-5
+0640 4383 43 85                    PLUS    FDB   *+2
+0641 4385 37 06              [ 7 ]         PULU  D              ; Get top of stack
+0642 4387 e3 c4              [ 6 ]         ADDD  0,U            ; Add it to new top of stack
+0643 4389 ed c4              [ 5 ]         STD   0,U            ; Put sum on top of stack
+0644 438b ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0645 438d 6e 91              [ 9 ]         JMP   [,X++]
+0646                               
+0647 438f 82                               FCB   $82
+0648 4390 44                               FCC   'D'
+0649 4391 ab                               FCB   $AB
+0650 4392 43 7f                            FDB   PLUS-4
+0651 4394 43 96                    DPLUS   FDB   *+2
+0652 4396 4f                 [ 2 ]         CLRA                 ; Clear A and the carry bit
+0653 4397 c6 04              [ 2 ]         LDB   #4             ; Do four bytes
+0654 4399 1f 31              [ 6 ]         TFR   U,X            ; Get a reference to the top of the stack
+0655 439b a6 03              [ 5 ] DPLU1   LDA   3,X            ; Get a byte from D2
+0656 439d a9 07              [ 5 ]         ADCA  7,X            ; Add it to a byte from D1 with the carry
+0657 439f a7 07              [ 5 ]         STA   7,X            ; Update
+0658 43a1 30 1f              [ 5 ]         LEAX  -1,X           ; Adjust X
+0659 43a3 5a                 [ 2 ]         DECB                 ; Decrement counter
+0660 43a4 26 f5              [ 3 ]         BNE   DPLU1          ; Loop if not done
+0661 43a6 33 44              [ 5 ]         LEAU  4,U            ; Adjust stack
+0662 43a8 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0663 43aa 6e 91              [ 9 ]         JMP   [,X++]
+0664                               
+0665 43ac 85                               FCB   $85
+0666 43ad 4d 49 4e 55                      FCC   'MINU'
+0667 43b1 d3                               FCB   $D3
+0668 43b2 43 8f                            FDB   DPLUS-5
+0669 43b4 43 b6                    MINUS   FDB   *+2
+0670 43b6 4f                 [ 2 ]         CLRA
+0671 43b7 5f                 [ 2 ]         CLRB                 ; Clear D
+0672 43b8 a3 c4              [ 6 ]         SUBD  0,U            ; Get twos complement in D
+0673 43ba ed c4              [ 5 ]         STD   0,U            ; Update
+0674 43bc ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0675 43be 6e 91              [ 9 ]         JMP   [,X++]
+0676                               
+0677 43c0 86                               FCB   $86
+0678 43c1 44 4d 49 4e 55                   FCC   'DMINU'
+0679 43c6 d3                               FCB   $D3
+0680 43c7 43 ac                            FDB   MINUS-8
+0681 43c9 43 cb                    DMINU   FDB   *+2
+0682 43cb 63 c4              [ 6 ]         COM   0,U            ; Complement the high order bytes of
+0683 43cd 63 41              [ 7 ]         COM   1,U            ; The double number
+0684 43cf 63 42              [ 7 ]         COM   2,U            ;
+0685 43d1 60 43              [ 7 ]         NEG   3,U            ; Twos complement the lowest byte
+0686 43d3 26 0a              [ 3 ]         BNE   DMIN1          ; And add carrys as needed
+0687 43d5 6c 42              [ 7 ]         INC   2,U            ;
+0688 43d7 26 06              [ 3 ]         BNE   DMIN1          ;
+0689 43d9 6c 41              [ 7 ]         INC   1,U            ;
+0690 43db 26 02              [ 3 ]         BNE   DMIN1          ;
+0691 43dd 6c c4              [ 6 ]         INC   0,U            ;
+0692 43df ae a1              [ 8 ] DMIN1   LDX   ,Y++           ; NEXT
+0693 43e1 6e 91              [ 9 ]         JMP   [,X++]
+0694                               
+0695 43e3 84                               FCB   $84
+0696 43e4 4f 56 45                         FCC   'OVE'
+0697 43e7 d2                               FCB   $D2
+0698 43e8 43 c0                            FDB   DMINU-9
+0699 43ea 43 ec                    OVER    FDB   *+2
+0700 43ec ec 42              [ 6 ]         LDD   2,U            ; Get 2nd item on stack
+0701 43ee 36 06              [ 7 ]         PSHU  D              ; Put it on the stack
+0702 43f0 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0703 43f2 6e 91              [ 9 ]         JMP   [,X++]
+0704                               
+0705 43f4 84                               FCB   $84
+0706 43f5 44 52 4f                         FCC   'DRO'
+0707 43f8 d0                               FCB   $D0
+0708 43f9 43 e3                            FDB   OVER-7
+0709 43fb 43 fd                    DROP    FDB   *+2
+0710 43fd 33 42              [ 5 ]         LEAU  2,U            ; Adjust stack pointer
+0711 43ff ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0712 4401 6e 91              [ 9 ]         JMP   [,X++]
+0713                               
+0714 4403 84                               FCB   $84
+0715 4404 53 57 41                         FCC   'SWA'
+0716 4407 d0                               FCB   $D0
+0717 4408 43 f4                            FDB   DROP-7
+0718 440a 44 0c                    SWAP    FDB   *+2
+0719 440c 37 06              [ 7 ]         PULU  D              ; Get top of stack
+0720 440e 37 10              [ 7 ]         PULU  X              ; Get 2nd on stack
+0721 4410 36 06              [ 7 ]         PSHU  D              ; Top of stack is now 2nd
+0722 4412 36 10              [ 7 ]         PSHU  X              ; 2nd is now top of stack
+0723 4414 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0724 4416 6e 91              [ 9 ]         JMP   [,X++]
+0725                               
+0726 4418 83                               FCB   $83
+0727 4419 44 55                            FCC   'DU'
+0728 441b d0                               FCB   $D0
+0729 441c 44 03                            FDB   SWAP-7
+0730 441e 44 20                    DUP     FDB   *+2
+0731 4420 ec c4              [ 5 ]         LDD   0,U            ; Get top of stack
+0732 4422 36 06              [ 7 ]         PSHU  D              ; Push it back on the stack
+0733 4424 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0734 4426 6e 91              [ 9 ]         JMP   [,X++]
+0735                               
+0736 4428 84                               FCB   $84
+0737 4429 32 44 55                         FCC   '2DU'
+0738 442c d0                               FCB   $D0
+0739 442d 44 18                            FDB   DUP-6
+0740 442f 44 31                    TDUP    FDB   *+2
+0741 4431 ec c4              [ 5 ]         LDD   0,U            ; Get high order word
+0742 4433 ae 42              [ 6 ]         LDX   2,U            ; Get low order word
+0743 4435 36 16              [ 9 ]         PSHU  X,D            ; Do the DUP
+0744 4437 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0745 4439 6e 91              [ 9 ]         JMP   [,X++]
+0746                               
+0747 443b 82                               FCB   $82
+0748 443c 2b                               FCC   '+'
+0749 443d a1                               FCB   $A1
+0750 443e 44 28                            FDB   TDUP-7
+0751 4440 44 42                    PSTOR   FDB   *+2
+0752 4442 37 10              [ 7 ]         PULU  X              ; Get address
+0753 4444 37 06              [ 7 ]         PULU  D              ; Get increment
+0754 4446 e3 84              [ 6 ]         ADDD  0,X            ; Do addition
+0755 4448 ed 84              [ 5 ]         STD   0,X            ; Store addition
+0756 444a ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0757 444c 6e 91              [ 9 ]         JMP   [,X++]
+0758                               
+0759 444e 86                               FCB   $86
+0760 444f 54 4f 47 47 4c                   FCC   'TOGGL'
+0761 4454 c5                               FCB   $C5
+0762 4455 44 3b                            FDB   PSTOR-5
+0763 4457 44 59                    TOGGL   FDB   *+2
+0764 4459 37 16              [ 9 ]         PULU  D,X            ; Get bit pattern in B, address in X
+0765 445b e8 84              [ 4 ]         EORB  0,X            ; Do the TOGGLE
+0766 445d e7 84              [ 4 ]         STB   0,X            ; Replace byte
+0767 445f ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0768 4461 6e 91              [ 9 ]         JMP   [,X++]
+0769                               
+0770 4463 81                               FCB   $81
+0771 4464 c0                               FCB   $C0
+0772 4465 44 4e                            FDB   TOGGL-9
+0773 4467 44 69                    AT      FDB   *+2
+0774 4469 ec d4              [ 8 ]         LDD   [0,U]          ; Fetch word pointed to by top of stack
+0775 446b ed c4              [ 5 ]         STD   0,U            ; Put word on the top of stack
+0776 446d ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0777 446f 6e 91              [ 9 ]         JMP   [,X++]
+0778                               
+0779 4471 82                               FCB   $82
+0780 4472 43                               FCC   'C'
+0781 4473 c0                               FCB   $C0
+0782 4474 44 63                            FDB   AT-4
+0783 4476 44 78                    CAT     FDB   *+2
+0784 4478 e6 d4              [ 7 ]         LDB   [0,U]          ; Fetch byte pointed to by top of stack
+0785 447a 4f                 [ 2 ]         CLRA                 ; Clear high order byte
+0786 447b ed c4              [ 5 ]         STD   0,U            ; Put word on the top of the stack
+0787 447d ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0788 447f 6e 91              [ 9 ]         JMP   [,X++]
+0789                               
+0790                               
+0791 4481 82                               FCB   $82
+0792 4482 32                               FCC   '2'
+0793 4483 c0                               FCB   $C0
+0794 4484 44 71                            FDB   CAT-5
+0795 4486 44 88                    TAT     FDB   *+2
+0796 4488 37 10              [ 7 ]         PULU  X              ; Get pointer
+0797 448a ec 02              [ 6 ]         LDD   2,X            ; Get least significant word
+0798 448c 36 06              [ 7 ]         PSHU  D              ; Push it
+0799 448e ec 84              [ 5 ]         LDD   0,X            ; Get most significant word
+0800 4490 36 06              [ 7 ]         PSHU  D              ; Push it
+0801 4492 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0802 4494 6e 91              [ 9 ]         JMP   [,X++]
+0803                               
+0804 4496 81                               FCB   $81
+0805 4497 a1                               FCB   $A1
+0806 4498 44 81                            FDB   TAT-5
+0807 449a 44 9c                    STORE   FDB   *+2
+0808 449c 37 10              [ 7 ]         PULU  X              ; Get address
+0809 449e 37 06              [ 7 ]         PULU  D              ; Get word in D register
+0810 44a0 ed 84              [ 5 ]         STD   0,X            ; Store word at address
+0811 44a2 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0812 44a4 6e 91              [ 9 ]         JMP   [,X++]
+0813                               
+0814 44a6 82                               FCB   $82
+0815 44a7 43                               FCC   'C'
+0816 44a8 a1                               FCB   $A1
+0817 44a9 44 96                            FDB   STORE-4
+0818 44ab 44 ad                    CSTOR   FDB   *+2
+0819 44ad 37 10              [ 7 ]         PULU  X              ; Get address
+0820 44af 37 06              [ 7 ]         PULU  D              ; Get byte in B register
+0821 44b1 e7 84              [ 4 ]         STB   0,X            ; Store byte at address
+0822 44b3 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0823 44b5 6e 91              [ 9 ]         JMP   [,X++]
+0824                               
+0825 44b7 82                               FCB   $82
+0826 44b8 32                               FCC   '2'
+0827 44b9 a1                               FCB   $A1
+0828 44ba 44 a6                            FDB   CSTOR-5
+0829 44bc 44 be                    TSTOR   FDB   *+2
+0830 44be 37 10              [ 7 ]         PULU  X              ; Get address
+0831 44c0 37 06              [ 7 ]         PULU  D              ; Get most significant word
+0832 44c2 ed 84              [ 5 ]         STD   0,X            ; Store it
+0833 44c4 37 06              [ 7 ]         PULU  D              ; Get least significant word
+0834 44c6 ed 02              [ 6 ]         STD   2,X            ; Store it
+0835 44c8 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0836 44ca 6e 91              [ 9 ]         JMP   [,X++]
+0837                               
+0838 44cc c1                               FCB   $C1
+0839 44cd ba                               FCB   $BA
+0840 44ce 44 b7                            FDB   TSTOR-5
+0841 44d0 44 e4                    COLON   FDB   DOCOL
+0842 44d2 48 8c                            FDB   QEXEC
+0843 44d4 48 47                            FDB   SCSP
+0844 44d6 46 72                            FDB   CURR
+0845 44d8 44 67                            FDB   AT
+0846 44da 46 64                            FDB   CONT
+0847 44dc 44 9a                            FDB   STORE
+0848 44de 4d 3d                            FDB   CREAT
+0849 44e0 49 11                            FDB   RBRAC
+0850 44e2 49 64                            FDB   PSCOD
+0851 44e4 34 20              [ 7 ] DOCOL   PSHS  Y              ; Store IP
+0852 44e6 31 84              [ 4 ]         LEAY  0,X            ; New IP = WP
+0853 44e8 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0854 44ea 6e 91              [ 9 ]         JMP   [,X++]
+0855                               
+0856 44ec c1                               FCB   $C1
+0857 44ed bb                               FCB   $BB
+0858 44ee 44 cc                            FDB   COLON-4
+0859 44f0 44 e4                    SEMI    FDB   DOCOL
+0860 44f2 48 b6                            FDB   QCSP
+0861 44f4 48 ed                            FDB   COMP
+0862 44f6 43 0d                            FDB   SEMIS
+0863 44f8 49 26                            FDB   SMUDG
+0864 44fa 49 03                            FDB   LBRAC
+0865 44fc 43 0d                            FDB   SEMIS
+0866                               
+0867 44fe 84                               FCB   $84
+0868 44ff 4e 4f 4f                         FCC   'NOO'
+0869 4502 d0                               FCB   $D0
+0870 4503 44 ec                            FDB   SEMI-4
+0871 4505 44 e4                    NOOP    FDB   DOCOL
+0872 4507 43 0d                            FDB   SEMIS
+0873                               
+0874 4509 88                               FCB   $88
+0875 450a 43 4f 4e 53 54 41                FCC   'CONSTAN'
+     4e
+0876 4511 d4                               FCB   $D4
+0877 4512 44 fe                            FDB   NOOP-7
+0878 4514 44 e4                    CON     FDB   DOCOL
+0879 4516 4d 3d                            FDB   CREAT
+0880 4518 49 26                            FDB   SMUDG
+0881 451a 47 05                            FDB   COMMA
+0882 451c 49 64                            FDB   PSCOD
+0883 451e ec 84              [ 5 ] DOCON   LDD   0,X            ; Get data pointed to by WP
+0884 4520 36 06              [ 7 ]         PSHU  D              ; Push it on the stack
+0885 4522 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0886 4524 6e 91              [ 9 ]         JMP   [,X++]
+0887                               
+0888 4526 88                               FCB   $88
+0889 4527 56 41 52 49 41 42                FCC   'VARIABL'
+     4c
+0890 452e c5                               FCB   $C5
+0891 452f 45 09                            FDB   CON-11
+0892 4531 44 e4                    VAR     FDB   DOCOL
+0893 4533 45 14                            FDB   CON
+0894 4535 49 64                            FDB   PSCOD
+0895 4537 36 10              [ 7 ] DOVAR   PSHU  X              ; Push the word pointer on the stack
+0896 4539 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0897 453b 6e 91              [ 9 ]         JMP   [,X++]
+0898                               
+0899 453d 84                               FCB   $84
+0900 453e 55 53 45                         FCC   'USE'
+0901 4541 d2                               FCB   $D2
+0902 4542 45 26                            FDB   VAR-11
+0903 4544 44 e4                    USER    FDB   DOCOL
+0904 4546 45 14                            FDB   CON
+0905 4548 49 64                            FDB   PSCOD
+0906 454a fc 40 2d           [ 6 ] DOUSE   LDD   UP             ; Get initial user pointer
+0907 454d e3 84              [ 6 ]         ADDD  0,X            ; Add the offset
+0908 454f 36 06              [ 7 ]         PSHU  D              ; Put it on the stack
+0909 4551 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+0910 4553 6e 91              [ 9 ]         JMP   [,X++]
+0911                               
+0912 4555 81                               FCB   $81
+0913 4556 b0                               FCB   $B0
+0914 4557 45 3d                            FDB   USER-7
+0915 4559 45 1e                    ZERO    FDB   DOCON
+0916 455b 00 00                            FDB   0
+0917                               
+0918 455d 81                               FCB   $81
+0919 455e b1                               FCB   $B1
+0920 455f 45 55                            FDB   ZERO-4
+0921 4561 45 1e                    ONE     FDB   DOCON
+0922 4563 00 01                            FDB   1
+0923                               
+0924 4565 81                               FCB   $81
+0925 4566 b2                               FCB   $B2
+0926 4567 45 5d                            FDB   ONE-4
+0927 4569 45 1e                    TWO     FDB   DOCON
+0928 456b 00 02                            FDB   2
+0929                               
+0930 456d 81                               FCB   $81
+0931 456e b3                               FCB   $B3
+0932 456f 45 65                            FDB   TWO-4
+0933 4571 45 1e                    THREE   FDB   DOCON
+0934 4573 00 03                            FDB   3
+0935                               
+0936 4575 82                               FCB   $82
+0937 4576 42                               FCC   'B'
+0938 4577 cc                               FCB   $CC
+0939 4578 45 6d                            FDB   THREE-4
+0940 457a 45 1e                    BLS     FDB   DOCON
+0941 457c 00 20                            FDB   $20
+0942                               
+0943 457e 83                               FCB   $83
+0944 457f 43 2f                            FCC   'C/'
+0945 4581 cc                               FCB   $CC
+0946 4582 45 75                            FDB   BLS-5
+0947 4584 45 1e                    CSLL    FDB   DOCON
+0948 4586 00 40                            FDB   64
+0949                               
+0950 4588 85                               FCB   $85
+0951 4589 46 49 52 53                      FCC   'FIRS'
+0952 458d d4                               FCB   $D4
+0953 458e 45 7e                            FDB   CSLL-6
+0954 4590 45 1e                    FIRST   FDB   DOCON
+0955 4592 40 00                            FDB   BUF1
+0956                               
+0957 4594 85                               FCB   $85
+0958 4595 4c 49 4d 49                      FCC   'LIMI'
+0959 4599 d4                               FCB   $D4
+0960 459a 45 88                            FDB   FIRST-8
+0961 459c 45 1e                    LIMIT   FDB   DOCON
+0962 459e 40 00                            FDB   EM
+0963                               
+0964 45a0 85                               FCB   $85
+0965 45a1 42 2f 42 55                      FCC   'B/BU'
+0966 45a5 c6                               FCB   $C6
+0967 45a6 45 94                            FDB   LIMIT-8
+0968 45a8 45 1e                    BBUF    FDB   DOCON
+0969 45aa 00 80                            FDB   KBBUF
+0970                               
+0971 45ac 85                               FCB   $85
+0972 45ad 42 2f 53 43                      FCC   'B/SC'
+0973 45b1 d2                               FCB   $D2
+0974 45b2 45 a0                            FDB   BBUF-8
+0975 45b4 45 1e                    BSCR    FDB   DOCON
+0976 45b6 00 08                            FDB   $08
+0977                               
+0978 45b8 87                               FCB   $87
+0979 45b9 2b 4f 52 49 47 49                FCC   '+ORIGI'
+0980 45bf ce                               FCB   $CE
+0981 45c0 45 ac                            FDB   BSCR-8
+0982 45c2 44 e4                    PORIG   FDB   DOCOL
+0983 45c4 40 37                            FDB   LIT
+0984 45c6 40 00                            FDB   ORIG
+0985 45c8 43 83                            FDB   PLUS
+0986 45ca 43 0d                            FDB   SEMIS
+0987                               
+0988                               *************************************************
+0989                               *                                               *
+0990                               *                 USER VARIABLES                *
+0991                               *                                               *
+0992                               *************************************************
+0993 45cc 82                               FCB   $82
+0994 45cd 53                               FCC   'S'
+0995 45ce b0                               FCB   $B0
+0996 45cf 45 b8                            FDB   PORIG-10
+0997 45d1 45 4a                    SZERO   FDB   DOUSE
+0998 45d3 00 06                            FDB   6
+0999                               
+1000 45d5 82                               FCB   $82
+1001 45d6 52                               FCC   'R'
+1002 45d7 b0                               FCB   $B0
+1003 45d8 45 cc                            FDB   SZERO-5
+1004 45da 45 4a                    RZERO   FDB   DOUSE
+1005 45dc 00 08                            FDB   8
+1006                               
+1007 45de 83                               FCB   $83
+1008 45df 54 49                            FCC   'TI'
+1009 45e1 c2                               FCB   $C2
+1010 45e2 45 d5                            FDB   RZERO-5
+1011 45e4 45 4a                    TIB     FDB   DOUSE
+1012 45e6 00 0a                            FDB   10
+1013                               
+1014 45e8 85                               FCB   $85
+1015 45e9 57 49 44 54                      FCC   'WIDT'
+1016 45ed c8                               FCB   $C8
+1017 45ee 45 de                            FDB   TIB-6
+1018 45f0 45 4a                    WIDTH   FDB   DOUSE
+1019 45f2 00 0c                            FDB   12
+1020                               
+1021 45f4 87                               FCB   $87
+1022 45f5 57 41 52 4e 49 4e                FCC   'WARNIN'
+1023 45fb c7                               FCB   $C7
+1024 45fc 45 e8                            FDB   WIDTH-8
+1025 45fe 45 4a                    WARN    FDB   DOUSE
+1026 4600 00 0e                            FDB   14
+1027                               
+1028 4602 85                               FCB   $85
+1029 4603 46 45 4e 43                      FCC   'FENC'
+1030 4607 c5                               FCB   $C5
+1031 4608 45 f4                            FDB   WARN-10
+1032 460a 45 4a                    FENCE   FDB   DOUSE
+1033 460c 00 10                            FDB   16
+1034                               
+1035 460e 82                               FCB   $82
+1036 460f 44                               FCC   'D'
+1037 4610 d0                               FCB   $D0
+1038 4611 46 02                            FDB   FENCE-8
+1039 4613 45 4a                    DP      FDB   DOUSE
+1040 4615 00 12                            FDB   18
+1041                               
+1042 4617 88                               FCB   $88
+1043 4618 56 4f 43 2d 4c 49                FCC   'VOC-LIN'
+     4e
+1044 461f cb                               FCB   $CB
+1045 4620 46 0e                            FDB   DP-5
+1046 4622 45 4a                    VOCL    FDB   DOUSE
+1047 4624 00 14                            FDB   20
+1048                               
+1049 4626 83                               FCB   $83
+1050 4627 42 4c                            FCC   'BL'
+1051 4629 cb                               FCB   $CB
+1052 462a 46 17                            FDB   VOCL-11
+1053 462c 45 4a                    BLK     FDB   DOUSE
+1054 462e 00 16                            FDB   22
+1055                               
+1056 4630 82                               FCB   $82
+1057 4631 49                               FCC   'I'
+1058 4632 ce                               FCB   $CE
+1059 4633 46 26                            FDB   BLK-6
+1060 4635 45 4a                    INN     FDB   DOUSE
+1061 4637 00 18                            FDB   24
+1062                               
+1063 4639 83                               FCB   $83
+1064 463a 4f 55                            FCC   'OU'
+1065 463c d4                               FCB   $D4
+1066 463d 46 30                            FDB   INN-5
+1067 463f 45 4a                    OUTT    FDB   DOUSE
+1068 4641 00 1a                            FDB   26
+1069                               
+1070 4643 83                               FCB   $83
+1071 4644 53 43                            FCC   'SC'
+1072 4646 d2                               FCB   $D2
+1073 4647 46 39                            FDB   OUTT-6
+1074 4649 45 4a                    SCR     FDB   DOUSE
+1075 464b 00 1c                            FDB   28
+1076                               
+1077 464d 86                               FCB   $86
+1078 464e 4f 46 46 53 45                   FCC   'OFFSE'
+1079 4653 d4                               FCB   $D4
+1080 4654 46 43                            FDB   SCR-6
+1081 4656 45 4a                    OFSET   FDB   DOUSE
+1082 4658 00 1e                            FDB   30
+1083                               
+1084 465a 87                               FCB   $87
+1085 465b 43 4f 4e 54 45 58                FCC   'CONTEX'
+1086 4661 d4                               FCB   $D4
+1087 4662 46 4d                            FDB   OFSET-9
+1088 4664 45 4a                    CONT    FDB   DOUSE
+1089 4666 00 20                            FDB   32
+1090                               
+1091 4668 87                               FCB   $87
+1092 4669 43 55 52 52 45 4e                FCC   'CURREN'
+1093 466f d4                               FCB   $D4
+1094 4670 46 5a                            FDB   CONT-10
+1095 4672 45 4a                    CURR    FDB   DOUSE
+1096 4674 00 22                            FDB   34
+1097                               
+1098 4676 85                               FCB   $85
+1099 4677 53 54 41 54                      FCC   'STAT'
+1100 467b c5                               FCB   $C5
+1101 467c 46 68                            FDB   CURR-10
+1102 467e 45 4a                    STATE   FDB   DOUSE
+1103 4680 00 24                            FDB   36
+1104                               
+1105 4682 84                               FCB   $84
+1106 4683 42 41 53                         FCC   'BAS'
+1107 4686 c5                               FCB   $C5
+1108 4687 46 76                            FDB   STATE-8
+1109 4689 45 4a                    BASE    FDB   DOUSE
+1110 468b 00 26                            FDB   38
+1111                               
+1112 468d 83                               FCB   $83
+1113 468e 44 50                            FCC   'DP'
+1114 4690 cc                               FCB   $CC
+1115 4691 46 82                            FDB   BASE-7
+1116 4693 45 4a                    DPL     FDB   DOUSE
+1117 4695 00 28                            FDB   40
+1118                               
+1119 4697 83                               FCB   $83
+1120 4698 46 4c                            FCC   'FL'
+1121 469a c4                               FCB   $C4
+1122 469b 46 8d                            FDB   DPL-6
+1123 469d 45 4a                    FLD     FDB   DOUSE
+1124 469f 00 2a                            FDB   42
+1125                               
+1126 46a1 83                               FCB   $83
+1127 46a2 43 53                            FCC   'CS'
+1128 46a4 d0                               FCB   $D0
+1129 46a5 46 97                            FDB   FLD-6
+1130 46a7 45 4a                    CSPP    FDB   DOUSE
+1131 46a9 00 2c                            FDB   44
+1132                               
+1133 46ab 82                               FCB   $82
+1134 46ac 52                               FCC   'R'
+1135 46ad a3                               FCB   $A3
+1136 46ae 46 a1                            FDB   CSPP-6
+1137 46b0 45 4a                    RNUM    FDB   DOUSE
+1138 46b2 00 2e                            FDB   46
+1139                               
+1140 46b4 83                               FCB   $83
+1141 46b5 48 4c                            FCC   'HL'
+1142 46b7 c4                               FCB   $C4
+1143 46b8 46 ab                            FDB   RNUM-5
+1144 46ba 45 4a                    HLD     FDB   DOUSE
+1145 46bc 00 30                            FDB   48
+1146                               
+1147                               *************************************************
+1148                               *                                               *
+1149                               *            END OF USER VARIABLES              *
+1150                               *                                               *
+1151                               *************************************************
+1152 46be 82                               FCB   $82
+1153 46bf 31                               FCC   '1'
+1154 46c0 ab                               FCB   $AB
+1155 46c1 46 b4                            FDB   HLD-6
+1156 46c3 46 c5                    ONEP    FDB   *+2
+1157 46c5 ec c4              [ 5 ]         LDD   0,U            ; Get top of parameter stack
+1158 46c7 c3 00 01           [ 4 ]         ADDD  #1             ; Increment top of parameter stack
+1159 46ca ed c4              [ 5 ]         STD   0,U            ; Put word back on stack
+1160 46cc ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+1161 46ce 6e 91              [ 9 ]         JMP   [,X++]
+1162                               
+1163 46d0 82                               FCB   $82
+1164 46d1 32                               FCC   '2'
+1165 46d2 ab                               FCB   $AB
+1166 46d3 46 be                            FDB   ONEP-5
+1167 46d5 46 d7                    TWOP    FDB   *+2
+1168 46d7 ec c4              [ 5 ]         LDD   0,U            ; Get top of parameter stack
+1169 46d9 c3 00 02           [ 4 ]         ADDD  #2             ; Add 2
+1170 46dc ed c4              [ 5 ]         STD   0,U            ; Put word back on stack
+1171 46de ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+1172 46e0 6e 91              [ 9 ]         JMP   [,X++]
+1173                               
+1174 46e2 84                               FCB   $84
+1175 46e3 48 45 52                         FCC   'HER'
+1176 46e6 c5                               FCB   $C5
+1177 46e7 46 d0                            FDB   TWOP-5
+1178 46e9 44 e4                    HERE    FDB   DOCOL
+1179 46eb 46 13                            FDB   DP
+1180 46ed 44 67                            FDB   AT
+1181 46ef 43 0d                            FDB   SEMIS
+1182                               
+1183 46f1 85                               FCB   $85
+1184 46f2 41 4c 4c 4f                      FCC   'ALLO'
+1185 46f6 d4                               FCB   $D4
+1186 46f7 46 e2                            FDB   HERE-7
+1187 46f9 44 e4                    ALLOT   FDB   DOCOL
+1188 46fb 46 13                            FDB   DP
+1189 46fd 44 40                            FDB   PSTOR
+1190 46ff 43 0d                            FDB   SEMIS
+1191                               
+1192 4701 81                               FCB   $81
+1193 4702 ac                               FCB   $AC
+1194 4703 46 f1                            FDB   ALLOT-8
+1195 4705 44 e4                    COMMA   FDB   DOCOL
+1196 4707 46 e9                            FDB   HERE
+1197 4709 44 9a                            FDB   STORE
+1198 470b 45 69                            FDB   TWO
+1199 470d 46 f9                            FDB   ALLOT
+1200 470f 43 0d                            FDB   SEMIS
+1201                               
+1202 4711 82                               FCB   $82
+1203 4712 43                               FCC   'C'
+1204 4713 ac                               FCB   $AC
+1205 4714 47 01                            FDB   COMMA-4
+1206 4716 44 e4                    CCOMM   FDB   DOCOL
+1207 4718 46 e9                            FDB   HERE
+1208 471a 44 ab                            FDB   CSTOR
+1209 471c 45 61                            FDB   ONE
+1210 471e 46 f9                            FDB   ALLOT
+1211 4720 43 0d                            FDB   SEMIS
+1212                               
+1213 4722 81                               FCB   $81
+1214 4723 ad                               FCB   $AD
+1215 4724 47 11                            FDB   CCOMM-5
+1216 4726 47 28                    SUBB    FDB   *+2
+1217 4728 ec 42              [ 6 ]         LDD   2,U            ; Get first value
+1218 472a a3 c4              [ 6 ]         SUBD  0,U            ; Do subtraction
+1219 472c 33 42              [ 5 ]         LEAU  2,U            ; Adjust stack
+1220 472e ed c4              [ 5 ]         STD   0,U            ; Put difference on top of stack
+1221 4730 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+1222 4732 6e 91              [ 9 ]         JMP   [,X++]
+1223                               
+1224 4734 81                               FCB   $81
+1225 4735 bd                               FCB   $BD
+1226 4736 47 22                            FDB   SUBB-4
+1227 4738 44 e4                    EQUAL   FDB   DOCOL
+1228 473a 47 26                            FDB   SUBB
+1229 473c 43 50                            FDB   ZEQU
+1230 473e 43 0d                            FDB   SEMIS
+1231                               
+1232 4740 81                               FCB   $81
+1233 4741 bc                               FCB   $BC
+1234 4742 47 34                            FDB   EQUAL-4
+1235 4744 47 46                    LESS    FDB   *+2
+1236 4746 37 06              [ 7 ]         PULU  D              ; Get top of stack
+1237 4748 8e 00 00           [ 3 ]         LDX   #0             ; Assume a FALSE
+1238 474b 10 a3 c4           [ 7 ]         CMPD  0,U            ; Compare with new top of stack
+1239 474e 2f 02              [ 3 ]         BLE   LESS1          ; Yes it is FALSE
+1240 4750 30 01              [ 5 ]         LEAX  1,X            ; No it is TRUE
+1241 4752 af c4              [ 5 ] LESS1   STX   0,U            ; Leave flag on the stack
+1242 4754 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+1243 4756 6e 91              [ 9 ]         JMP   [,X++]
+1244                               
+1245 4758 82                               FCB   $82
+1246 4759 55                               FCC   'U'
+1247 475a bc                               FCB   $BC
+1248 475b 47 40                            FDB   LESS-4
+1249 475d 44 e4                    ULESS   FDB   DOCOL
+1250 475f 44 2f                            FDB   TDUP
+1251 4761 42 b5                            FDB   XORR
+1252 4763 43 6a                            FDB   ZLESS
+1253 4765 40 6e                            FDB   ZBRAN
+1254 4767 00 0c                            FDB   ULES1-*
+1255 4769 43 fb                            FDB   DROP
+1256 476b 43 6a                            FDB   ZLESS
+1257 476d 43 50                            FDB   ZEQU
+1258 476f 40 5a                            FDB   BRAN
+1259 4771 00 06                            FDB   ULES2-*
+1260 4773 47 26                    ULES1   FDB   SUBB
+1261 4775 43 6a                            FDB   ZLESS
+1262 4777 43 0d                    ULES2   FDB   SEMIS
+1263                               
+1264 4779 81                               FCB   $81
+1265 477a be                               FCB   $BE
+1266 477b 47 58                            FDB   ULESS-5
+1267 477d 44 e4                    GREAT   FDB   DOCOL
+1268 477f 44 0a                            FDB   SWAP
+1269 4781 47 44                            FDB   LESS
+1270 4783 43 0d                            FDB   SEMIS
+1271                               
+1272 4785 83                               FCB   $83
+1273 4786 52 4f                            FCC   'RO'
+1274 4788 d4                               FCB   $D4
+1275 4789 47 79                            FDB   GREAT-4
+1276 478b 47 8d                    ROT     FDB   *+2
+1277 478d 34 20              [ 7 ]         PSHS  Y              ; Save IP
+1278 478f 37 36              [11 ]         PULU  D,X,Y          ; S1 in D, S2 in X, S3 in Y
+1279 4791 36 16              [ 9 ]         PSHU  D,X            ; Put S1 and S2 back on stack
+1280 4793 36 20              [ 7 ]         PSHU  Y              ; Put S3 on top of stack
+1281 4795 35 20              [ 7 ]         PULS  Y              ; Restore IP
+1282 4797 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+1283 4799 6e 91              [ 9 ]         JMP   [,X++]
+1284                               
+1285 479b 85                               FCB   $85
+1286 479c 53 50 41 43                      FCC   'SPAC'
+1287 47a0 c5                               FCB   $C5
+1288 47a1 47 85                            FDB   ROT-6
+1289 47a3 44 e4                    SPACE   FDB   DOCOL
+1290 47a5 45 7a                            FDB   BLS
+1291 47a7 41 a3                            FDB   EMIT
+1292 47a9 43 0d                            FDB   SEMIS
+1293                               
+1294 47ab 84                               FCB   $84
+1295 47ac 2d 44 55                         FCC   '-DU'
+1296 47af d0                               FCB   $D0
+1297 47b0 47 9b                            FDB   SPACE-8
+1298 47b2 44 e4                    DDUP    FDB   DOCOL
+1299 47b4 44 1e                            FDB   DUP
+1300 47b6 40 6e                            FDB   ZBRAN
+1301 47b8 00 04                            FDB   DDUP1-*
+1302 47ba 44 1e                            FDB   DUP
+1303 47bc 43 0d                    DDUP1   FDB   SEMIS
+1304                               
+1305 47be 88                               FCB   $88
+1306 47bf 54 52 41 56 45 52                FCC   'TRAVERS'
+     53
+1307 47c6 c5                               FCB   $C5
+1308 47c7 47 ab                            FDB   DDUP-7
+1309 47c9 44 e4                    TRAV    FDB   DOCOL
+1310 47cb 44 0a                            FDB   SWAP
+1311 47cd 43 ea                    TRAV1   FDB   OVER
+1312 47cf 43 83                            FDB   PLUS
+1313 47d1 40 37                            FDB   LIT
+1314 47d3 00 7f                            FDB   $7F
+1315 47d5 43 ea                            FDB   OVER
+1316 47d7 44 76                            FDB   CAT
+1317 47d9 47 44                            FDB   LESS
+1318 47db 40 6e                            FDB   ZBRAN
+1319 47dd ff f0                            FDB   TRAV1-*
+1320 47df 44 0a                            FDB   SWAP
+1321 47e1 43 fb                            FDB   DROP
+1322 47e3 43 0d                            FDB   SEMIS
+1323                               
+1324 47e5 86                               FCB   $86
+1325 47e6 4c 41 54 45 53                   FCC   'LATES'
+1326 47eb d4                               FCB   $D4
+1327 47ec 47 be                            FDB   TRAV-11
+1328 47ee 44 e4                    LATES   FDB   DOCOL
+1329 47f0 46 72                            FDB   CURR
+1330 47f2 44 67                            FDB   AT
+1331 47f4 44 67                            FDB   AT
+1332 47f6 43 0d                            FDB   SEMIS
+1333                               
+1334 47f8 83                               FCB   $83
+1335 47f9 4c 46                            FCC   'LF'
+1336 47fb c1                               FCB   $C1
+1337 47fc 47 e5                            FDB   LATES-9
+1338 47fe 44 e4                    LFA     FDB   DOCOL
+1339 4800 40 37                            FDB   LIT
+1340 4802 00 04                            FDB   4
+1341 4804 47 26                            FDB   SUBB
+1342 4806 43 0d                            FDB   SEMIS
+1343                               
+1344 4808 83                               FCB   $83
+1345 4809 43 46                            FCC   'CF'
+1346 480b c1                               FCB   $C1
+1347 480c 47 f8                            FDB   LFA-6
+1348 480e 44 e4                    CFA     FDB   DOCOL
+1349 4810 45 69                            FDB   TWO
+1350 4812 47 26                            FDB   SUBB
+1351 4814 43 0d                            FDB   SEMIS
+1352                               
+1353 4816 83                               FCB   $83
+1354 4817 4e 46                            FCC   'NF'
+1355 4819 c1                               FCB   $C1
+1356 481a 48 08                            FDB   CFA-6
+1357 481c 44 e4                    NFA     FDB   DOCOL
+1358 481e 40 37                            FDB   LIT
+1359 4820 00 05                            FDB   5
+1360 4822 47 26                            FDB   SUBB
+1361 4824 40 37                            FDB   LIT
+1362 4826 ff ff                            FDB   -1
+1363 4828 47 c9                            FDB   TRAV
+1364 482a 43 0d                            FDB   SEMIS
+1365                               
+1366 482c 83                               FCB   $83
+1367 482d 50 46                            FCC   'PF'
+1368 482f c1                               FCB   $C1
+1369 4830 48 16                            FDB   NFA-6
+1370 4832 44 e4                    PFA     FDB   DOCOL
+1371 4834 45 61                            FDB   ONE
+1372 4836 47 c9                            FDB   TRAV
+1373 4838 40 37                            FDB   LIT
+1374 483a 00 05                            FDB   5
+1375 483c 43 83                            FDB   PLUS
+1376 483e 43 0d                            FDB   SEMIS
+1377                               
+1378 4840 84                               FCB   $84
+1379 4841 21 43 53                         FCC   '!CS'
+1380 4844 d0                               FCB   $D0
+1381 4845 48 2c                            FDB   PFA-6
+1382 4847 44 e4                    SCSP    FDB   DOCOL
+1383 4849 42 c9                            FDB   SPAT
+1384 484b 46 a7                            FDB   CSPP
+1385 484d 44 9a                            FDB   STORE
+1386 484f 43 0d                            FDB   SEMIS
+1387                               
+1388 4851 86                               FCB   $86
+1389 4852 3f 45 52 52 4f                   FCC   '?ERRO'
+1390 4857 d2                               FCB   $D2
+1391 4858 48 40                            FDB   SCSP-7
+1392 485a 44 e4                    QERR    FDB   DOCOL
+1393 485c 44 0a                            FDB   SWAP
+1394 485e 40 6e                            FDB   ZBRAN
+1395 4860 00 08                            FDB   QERR1-*
+1396 4862 4c cf                            FDB   ERROR
+1397 4864 40 5a                            FDB   BRAN
+1398 4866 00 04                            FDB   QERR2-*
+1399 4868 43 fb                    QERR1   FDB   DROP
+1400 486a 43 0d                    QERR2   FDB   SEMIS
+1401                               
+1402 486c 85                               FCB   $85
+1403 486d 3f 43 4f 4d                      FCC   '?COM'
+1404 4871 d0                               FCB   $D0
+1405 4872 48 51                            FDB   QERR-9
+1406 4874 44 e4                    QCOMP   FDB   DOCOL
+1407 4876 46 7e                            FDB   STATE
+1408 4878 44 67                            FDB   AT
+1409 487a 43 50                            FDB   ZEQU
+1410 487c 40 37                            FDB   LIT
+1411 487e 00 11                            FDB   $11
+1412 4880 48 5a                            FDB   QERR
+1413 4882 43 0d                            FDB   SEMIS
+1414                               
+1415 4884 85                               FCB   $85
+1416 4885 51 45 58 45                      FCC   'QEXE'
+1417 4889 c3                               FCB   $C3
+1418 488a 48 6c                            FDB   QCOMP-8
+1419 488c 44 e4                    QEXEC   FDB   DOCOL
+1420 488e 46 7e                            FDB   STATE
+1421 4890 44 67                            FDB   AT
+1422 4892 40 37                            FDB   LIT
+1423 4894 00 12                            FDB   $12
+1424 4896 48 5a                            FDB   QERR
+1425 4898 43 0d                            FDB   SEMIS
+1426                               
+1427 489a 86                               FCB   $86
+1428 489b 3f 50 41 49 52                   FCC   '?PAIR'
+1429 48a0 d3                               FCB   $D3
+1430 48a1 48 84                            FDB   QEXEC-8
+1431 48a3 44 e4                    QPAIR   FDB   DOCOL
+1432 48a5 47 26                            FDB   SUBB
+1433 48a7 40 37                            FDB   LIT
+1434 48a9 00 13                            FDB   $13
+1435 48ab 48 5a                            FDB   QERR
+1436 48ad 43 0d                            FDB   SEMIS
+1437                               
+1438 48af 84                               FCB   $84
+1439 48b0 3f 43 53                         FCC   '?CS'
+1440 48b3 d0                               FCB   $D0
+1441 48b4 48 9a                            FDB   QPAIR-9
+1442 48b6 44 e4                    QCSP    FDB   DOCOL
+1443 48b8 42 c9                            FDB   SPAT
+1444 48ba 46 a7                            FDB   CSPP
+1445 48bc 44 67                            FDB   AT
+1446 48be 47 26                            FDB   SUBB
+1447 48c0 40 37                            FDB   LIT
+1448 48c2 00 14                            FDB   $14
+1449 48c4 48 5a                            FDB   QERR
+1450 48c6 43 0d                            FDB   SEMIS
+1451                               
+1452 48c8 88                               FCB   $88
+1453 48c9 3f 4c 4f 41 44 49                FCC   '?LOADIN'
+     4e
+1454 48d0 c7                               FCB   $C7
+1455 48d1 48 af                            FDB   QCSP-7
+1456 48d3 44 e4                    QLOAD   FDB   DOCOL
+1457 48d5 46 2c                            FDB   BLK
+1458 48d7 44 67                            FDB   AT
+1459 48d9 43 50                            FDB   ZEQU
+1460 48db 40 37                            FDB   LIT
+1461 48dd 00 16                            FDB   $16
+1462 48df 48 5a                            FDB   QERR
+1463 48e1 43 0d                            FDB   SEMIS
+1464                               
+1465 48e3 87                               FCB   $87
+1466 48e4 43 4f 4d 50 49 4c                FCC   'COMPIL'
+1467 48ea c5                               FCB   $C5
+1468 48eb 48 c8                            FDB   QLOAD-11
+1469 48ed 44 e4                    COMP    FDB   DOCOL
+1470 48ef 48 74                            FDB   QCOMP
+1471 48f1 43 3b                            FDB   FROMR
+1472 48f3 44 1e                            FDB   DUP
+1473 48f5 46 d5                            FDB   TWOP
+1474 48f7 43 2c                            FDB   TOR
+1475 48f9 44 67                            FDB   AT
+1476 48fb 47 05                            FDB   COMMA
+1477 48fd 43 0d                            FDB   SEMIS
+1478                               
+1479 48ff c1                               FCB   $C1
+1480 4900 db                               FCB   $DB
+1481 4901 48 e3                            FDB   COMP-10
+1482 4903 44 e4                    LBRAC   FDB   DOCOL
+1483 4905 45 59                            FDB   ZERO
+1484 4907 46 7e                            FDB   STATE
+1485 4909 44 9a                            FDB   STORE
+1486 490b 43 0d                            FDB   SEMIS
+1487                               
+1488 490d 81                               FCB   $81
+1489 490e dd                               FCB   $DD
+1490 490f 48 ff                            FDB   LBRAC-4
+1491 4911 44 e4                    RBRAC   FDB   DOCOL
+1492 4913 40 37                            FDB   LIT
+1493 4915 00 c0                            FDB   $00C0
+1494 4917 46 7e                            FDB   STATE
+1495 4919 44 9a                            FDB   STORE
+1496 491b 43 0d                            FDB   SEMIS
+1497                               
+1498 491d 86                               FCB   $86
+1499 491e 53 4d 55 44 47                   FCC   'SMUDG'
+1500 4923 c5                               FCB   $C5
+1501 4924 49 0d                            FDB   RBRAC-4
+1502 4926 44 e4                    SMUDG   FDB   DOCOL
+1503 4928 47 ee                            FDB   LATES
+1504 492a 40 37                            FDB   LIT
+1505 492c 00 20                            FDB   $20
+1506 492e 44 57                            FDB   TOGGL
+1507 4930 43 0d                            FDB   SEMIS
+1508                               
+1509 4932 83                               FCB   $83
+1510 4933 48 45                            FCC   'HE'
+1511 4935 d8                               FCB   $D8
+1512 4936 49 1d                            FDB   SMUDG-9
+1513 4938 44 e4                    HEX     FDB   DOCOL
+1514 493a 40 37                            FDB   LIT
+1515 493c 00 10                            FDB   16
+1516 493e 46 89                            FDB   BASE
+1517 4940 44 9a                            FDB   STORE
+1518 4942 43 0d                            FDB   SEMIS
+1519                               
+1520 4944 87                               FCB   $87
+1521 4945 44 45 43 49 4d 41                FCC   'DECIMA'
+1522 494b cc                               FCB   $CC
+1523 494c 49 32                            FDB   HEX-6
+1524 494e 44 e4                    DECA    FDB   DOCOL
+1525 4950 40 37                            FDB   LIT
+1526 4952 00 0a                            FDB   10
+1527 4954 46 89                            FDB   BASE
+1528 4956 44 9a                            FDB   STORE
+1529 4958 43 0d                            FDB   SEMIS
+1530                               
+1531 495a 87                               FCB   $87
+1532 495b 28 3b 43 4f 44 45                FCC   '(;CODE'
+1533 4961 a9                               FCB   $A9
+1534 4962 49 44                            FDB   DECA-10
+1535 4964 44 e4                    PSCOD   FDB   DOCOL
+1536 4966 43 3b                            FDB   FROMR
+1537 4968 47 ee                            FDB   LATES
+1538 496a 48 32                            FDB   PFA
+1539 496c 48 0e                            FDB   CFA
+1540 496e 44 9a                            FDB   STORE
+1541 4970 43 0d                            FDB   SEMIS
+1542                               
+1543 4972 c5                               FCB   $C5
+1544 4973 3b 43 4f 44                      FCC   ';COD'
+1545 4977 c5                               FCB   $C5
+1546 4978 49 5a                            FDB   PSCOD-10
+1547 497a 44 e4                    SEMIC   FDB   DOCOL
+1548 497c 48 b6                            FDB   QCSP
+1549 497e 48 ed                            FDB   COMP
+1550 4980 49 64                            FDB   PSCOD
+1551 4982 49 03                            FDB   LBRAC
+1552 4984 43 0d                            FDB   SEMIS
+1553                               
+1554 4986 87                               FCB   $87
+1555 4987 3c 42 55 49 4c 44                FCC   '<BUILD'
+1556 498d d3                               FCB   $D3
+1557 498e 49 72                            FDB   SEMIC-8
+1558 4990 44 e4                    BUILD   FDB   DOCOL
+1559 4992 45 59                            FDB   ZERO
+1560 4994 45 14                            FDB   CON
+1561 4996 43 0d                            FDB   SEMIS
+1562                               
+1563 4998 85                               FCB   $85
+1564 4999 44 4f 45 53                      FCC   'DOES'
+1565 499d be                               FCB   $BE
+1566 499e 49 86                            FDB   BUILD-10
+1567 49a0 44 e4                    DOES    FDB   DOCOL
+1568 49a2 43 3b                            FDB   FROMR
+1569 49a4 47 ee                            FDB   LATES
+1570 49a6 48 32                            FDB   PFA
+1571 49a8 44 9a                            FDB   STORE
+1572 49aa 49 64                            FDB   PSCOD
+1573 49ac 34 20              [ 7 ] DODOE   PSHS  Y              ; Save instruction pointer
+1574 49ae 10 ae 81           [ 9 ]         LDY   ,X++           ; IP=[WP] , WP=WP+2
+1575 49b1 36 10              [ 7 ]         PSHU  X              ; Put WP on parameter stack
+1576 49b3 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+1577 49b5 6e 91              [ 9 ]         JMP   [,X++]
+1578                               
+1579 49b7 85                               FCB   $85
+1580 49b8 43 4f 55 4e                      FCC   'COUN'
+1581 49bc d4                               FCB   $D4
+1582 49bd 49 98                            FDB   DOES-8
+1583 49bf 44 e4                    COUNT   FDB   DOCOL
+1584 49c1 44 1e                            FDB   DUP
+1585 49c3 46 c3                            FDB   ONEP
+1586 49c5 44 0a                            FDB   SWAP
+1587 49c7 44 76                            FDB   CAT
+1588 49c9 43 0d                            FDB   SEMIS
+1589                               
+1590 49cb 84                               FCB   $84
+1591 49cc 54 59 50                         FCC   'TYP'
+1592 49cf c5                               FCB   $C5
+1593 49d0 49 b7                            FDB   COUNT-8
+1594 49d2 44 e4                    TYPES   FDB   DOCOL
+1595 49d4 47 b2                            FDB   DDUP
+1596 49d6 40 6e                            FDB   ZBRAN
+1597 49d8 00 18                            FDB   TYPE1-*
+1598 49da 43 ea                            FDB   OVER
+1599 49dc 43 83                            FDB   PLUS
+1600 49de 44 0a                            FDB   SWAP
+1601 49e0 40 b4                            FDB   XDO
+1602 49e2 40 c2                    TYPE2   FDB   IDO
+1603 49e4 44 76                            FDB   CAT
+1604 49e6 41 a3                            FDB   EMIT
+1605 49e8 40 87                            FDB   XLOOP
+1606 49ea ff f8                            FDB   TYPE2-*
+1607 49ec 40 5a                            FDB   BRAN
+1608 49ee 00 04                            FDB   TYPE3-*
+1609 49f0 43 fb                    TYPE1   FDB   DROP
+1610 49f2 43 0d                    TYPE3   FDB   SEMIS
+1611                               
+1612 49f4 89                               FCB   $89
+1613 49f5 2d 54 52 41 49 4c                FCC   '-TRAILIN'
+     49 4e
+1614 49fd c7                               FCB   $C7
+1615 49fe 49 cb                            FDB   TYPES-7
+1616 4a00 44 e4                    DTRAI   FDB   DOCOL
+1617 4a02 44 1e                            FDB   DUP
+1618 4a04 45 59                            FDB   ZERO
+1619 4a06 40 b4                            FDB   XDO
+1620 4a08 43 ea                    DTRA1   FDB   OVER
+1621 4a0a 43 ea                            FDB   OVER
+1622 4a0c 43 83                            FDB   PLUS
+1623 4a0e 45 61                            FDB   ONE
+1624 4a10 47 26                            FDB   SUBB
+1625 4a12 44 76                            FDB   CAT
+1626 4a14 45 7a                            FDB   BLS
+1627 4a16 47 26                            FDB   SUBB
+1628 4a18 40 6e                            FDB   ZBRAN
+1629 4a1a 00 08                            FDB   DTRA2-*
+1630 4a1c 43 1d                            FDB   LEAVE
+1631 4a1e 40 5a                            FDB   BRAN
+1632 4a20 00 06                            FDB   DTRA3-*
+1633 4a22 45 61                    DTRA2   FDB   ONE
+1634 4a24 47 26                            FDB   SUBB
+1635 4a26 40 87                    DTRA3   FDB   XLOOP
+1636 4a28 ff e0                            FDB   DTRA1-*
+1637 4a2a 43 0d                            FDB   SEMIS
+1638                               
+1639 4a2c 84                               FCB   $84
+1640 4a2d 28 2e 22                         FCC   '(."'
+1641 4a30 a9                               FCB   $A9
+1642 4a31 49 f4                            FDB   DTRAI-12
+1643 4a33 44 e4                    PDOTQ   FDB   DOCOL
+1644 4a35 43 49                            FDB   RR
+1645 4a37 49 bf                            FDB   COUNT
+1646 4a39 44 1e                            FDB   DUP
+1647 4a3b 46 c3                            FDB   ONEP
+1648 4a3d 43 3b                            FDB   FROMR
+1649 4a3f 43 83                            FDB   PLUS
+1650 4a41 43 2c                            FDB   TOR
+1651 4a43 49 d2                            FDB   TYPES
+1652 4a45 43 0d                            FDB   SEMIS
+1653                               
+1654 4a47 c2                               FCB   $C2
+1655 4a48 2e                               FCC   '.'
+1656 4a49 a2                               FCB   $A2
+1657 4a4a 4a 2c                            FDB   PDOTQ-7
+1658 4a4c 44 e4                    DOTQ    FDB   DOCOL
+1659 4a4e 40 37                            FDB   LIT
+1660 4a50 00 22                            FDB   $22
+1661 4a52 46 7e                            FDB   STATE
+1662 4a54 44 67                            FDB   AT
+1663 4a56 40 6e                            FDB   ZBRAN
+1664 4a58 00 14                            FDB   DOTQ1-*
+1665 4a5a 48 ed                            FDB   COMP
+1666 4a5c 4a 33                            FDB   PDOTQ
+1667 4a5e 4b b3                            FDB   WORDS
+1668 4a60 46 e9                            FDB   HERE
+1669 4a62 44 76                            FDB   CAT
+1670 4a64 46 c3                            FDB   ONEP
+1671 4a66 46 f9                            FDB   ALLOT
+1672 4a68 40 5a                            FDB   BRAN
+1673 4a6a 00 0a                            FDB   DOTQ2-*
+1674 4a6c 4b b3                    DOTQ1   FDB   WORDS
+1675 4a6e 46 e9                            FDB   HERE
+1676 4a70 49 bf                            FDB   COUNT
+1677 4a72 49 d2                            FDB   TYPES
+1678 4a74 43 0d                    DOTQ2   FDB   SEMIS
+1679                               
+1680 4a76 86                               FCB   $86
+1681 4a77 45 58 50 45 43                   FCC   'EXPEC'
+1682 4a7c d4                               FCB   $D4
+1683 4a7d 4a 47                            FDB   DOTQ-5
+1684 4a7f 44 e4                    EXPEC   FDB   DOCOL
+1685 4a81 43 ea                            FDB   OVER
+1686 4a83 43 83                            FDB   PLUS
+1687 4a85 43 ea                            FDB   OVER
+1688 4a87 40 b4                            FDB   XDO
+1689 4a89 41 b5                    EXPE1   FDB   KEY
+1690 4a8b 44 1e                            FDB   DUP
+1691 4a8d 40 37                            FDB   LIT
+1692 4a8f 00 08                            FDB   BSOUT
+1693 4a91 47 38                            FDB   EQUAL
+1694 4a93 40 6e                            FDB   ZBRAN
+1695 4a95 00 2a                            FDB   EXPE2-*
+1696 4a97 43 fb                            FDB   DROP
+1697 4a99 44 1e                            FDB   DUP
+1698 4a9b 40 c2                            FDB   IDO
+1699 4a9d 47 38                            FDB   EQUAL
+1700 4a9f 44 1e                            FDB   DUP
+1701 4aa1 43 3b                            FDB   FROMR
+1702 4aa3 45 69                            FDB   TWO
+1703 4aa5 47 26                            FDB   SUBB
+1704 4aa7 43 83                            FDB   PLUS
+1705 4aa9 43 2c                            FDB   TOR
+1706 4aab 40 6e                            FDB   ZBRAN
+1707 4aad 00 0a                            FDB   EXPE6-*
+1708 4aaf 40 37                            FDB   LIT
+1709 4ab1 00 07                            FDB   BELL
+1710 4ab3 40 5a                            FDB   BRAN
+1711 4ab5 00 06                            FDB   EXPE7-*
+1712 4ab7 40 37                    EXPE6   FDB   LIT
+1713 4ab9 00 08                            FDB   BSOUT
+1714 4abb 40 5a                    EXPE7   FDB   BRAN
+1715 4abd 00 28                            FDB   EXPE3-*
+1716 4abf 44 1e                    EXPE2   FDB   DUP
+1717 4ac1 40 37                            FDB   LIT
+1718 4ac3 00 0d                            FDB   $0D
+1719 4ac5 47 38                            FDB   EQUAL
+1720 4ac7 40 6e                            FDB   ZBRAN
+1721 4ac9 00 0e                            FDB   EXPE4-*
+1722 4acb 43 1d                            FDB   LEAVE
+1723 4acd 43 fb                            FDB   DROP
+1724 4acf 45 7a                            FDB   BLS
+1725 4ad1 45 59                            FDB   ZERO
+1726 4ad3 40 5a                            FDB   BRAN
+1727 4ad5 00 04                            FDB   EXPE5-*
+1728 4ad7 44 1e                    EXPE4   FDB   DUP
+1729 4ad9 40 c2                    EXPE5   FDB   IDO
+1730 4adb 44 ab                            FDB   CSTOR
+1731 4add 45 59                            FDB   ZERO
+1732 4adf 40 c2                            FDB   IDO
+1733 4ae1 46 c3                            FDB   ONEP
+1734 4ae3 44 9a                            FDB   STORE
+1735 4ae5 41 a3                    EXPE3   FDB   EMIT
+1736 4ae7 40 87                            FDB   XLOOP
+1737 4ae9 ff a0                            FDB   EXPE1-*
+1738 4aeb 43 fb                            FDB   DROP
+1739 4aed 43 0d                            FDB   SEMIS
+1740                               
+1741 4aef 85                               FCB   $85
+1742 4af0 51 55 45 52                      FCC   'QUER'
+1743 4af4 d9                               FCB   $D9
+1744 4af5 4a 76                            FDB   EXPEC-9
+1745 4af7 44 e4                    QUERY   FDB   DOCOL
+1746 4af9 45 e4                            FDB   TIB
+1747 4afb 44 67                            FDB   AT
+1748 4afd 40 37                            FDB   LIT
+1749 4aff 00 50                            FDB   $50
+1750 4b01 4a 7f                            FDB   EXPEC
+1751 4b03 45 59                            FDB   ZERO
+1752 4b05 46 35                            FDB   INN
+1753 4b07 44 9a                            FDB   STORE
+1754 4b09 43 0d                            FDB   SEMIS
+1755                               
+1756 4b0b c1                               FCB     $C1
+1757 4b0c 80                               FCB     $80
+1758 4b0d 4a ef                            FDB     QUERY-8
+1759 4b0f 44 e4                    NULL    FDB     DOCOL
+1760 4b11 46 2c                            FDB     BLK
+1761 4b13 44 67                            FDB     AT
+1762 4b15 40 6e                            FDB     ZBRAN
+1763 4b17 00 2a                            FDB     NULL1-*
+1764 4b19 45 61                            FDB     ONE
+1765 4b1b 46 2c                            FDB     BLK
+1766 4b1d 44 40                            FDB     PSTOR
+1767 4b1f 45 59                            FDB     ZERO
+1768 4b21 46 35                            FDB     INN
+1769 4b23 44 9a                            FDB     STORE
+1770 4b25 46 2c                            FDB     BLK
+1771 4b27 44 67                            FDB     AT
+1772 4b29 45 b4                            FDB     BSCR
+1773 4b2b 45 61                            FDB     ONE
+1774 4b2d 47 26                            FDB     SUBB
+1775 4b2f 42 8e                            FDB     ANDD
+1776 4b31 43 50                            FDB     ZEQU
+1777 4b33 40 6e                            FDB     ZBRAN
+1778 4b35 00 08                            FDB     NULL2-*
+1779 4b37 48 8c                            FDB     QEXEC
+1780 4b39 43 3b                            FDB     FROMR
+1781 4b3b 43 fb                            FDB     DROP
+1782 4b3d 40 5a                    NULL2   FDB     BRAN
+1783 4b3f 00 06                            FDB     NULL3-*
+1784 4b41 43 3b                    NULL1   FDB     FROMR
+1785 4b43 43 fb                            FDB     DROP
+1786 4b45 43 0d                    NULL3   FDB     SEMIS
+1787                               
+1788                               
+1789 4b47 84                               FCB   $84
+1790 4b48 46 49 4c                         FCC   'FIL'
+1791 4b4b cc                               FCB   $CC
+1792 4b4c 4b 0b                            FDB   NULL-4
+1793 4b4e 4b 50                    FILL    FDB   *+2
+1794 4b50 34 20              [ 7 ]         PSHS  Y              ; Save IP
+1795 4b52 37 36              [11 ]         PULU  D,X,Y          ; Character in B, count in X, address in Y
+1796 4b54 e7 a0              [ 6 ] FILL1   STB   ,Y+            ; Store character
+1797 4b56 30 1f              [ 5 ]         LEAX  -1,X           ; Decrement counter
+1798 4b58 26 fa              [ 3 ]         BNE   FILL1          ; Loop until done
+1799 4b5a 35 20              [ 7 ]         PULS  Y              ; Get IP
+1800 4b5c ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+1801 4b5e 6e 91              [ 9 ]         JMP   [,X++]
+1802                               
+1803 4b60 85                               FCB   $85
+1804 4b61 45 52 41 53                      FCC   'ERAS'
+1805 4b65 c5                               FCB   $C5
+1806 4b66 4b 47                            FDB   FILL-7
+1807 4b68 44 e4                    ERASEE  FDB   DOCOL
+1808 4b6a 45 59                            FDB   ZERO
+1809 4b6c 4b 4e                            FDB   FILL
+1810 4b6e 43 0d                            FDB   SEMIS
+1811                               
+1812 4b70 86                               FCB   $86
+1813 4b71 42 4c 41 4e 4b                   FCC   'BLANK'
+1814 4b76 d3                               FCB   $D3
+1815 4b77 4b 60                            FDB   ERASEE-8
+1816 4b79 44 e4                    BLANK   FDB   DOCOL
+1817 4b7b 45 7a                            FDB   BLS
+1818 4b7d 4b 4e                            FDB   FILL
+1819 4b7f 43 0d                            FDB   SEMIS
+1820                               
+1821 4b81 84                               FCB   $84
+1822 4b82 48 4f 4c                         FCC   'HOL'
+1823 4b85 c4                               FCB   $C4
+1824 4b86 4b 70                            FDB   BLANK-9
+1825 4b88 44 e4                    HOLD    FDB   DOCOL
+1826 4b8a 40 37                            FDB   LIT
+1827 4b8c ff ff                            FDB   -1
+1828 4b8e 46 ba                            FDB   HLD
+1829 4b90 44 40                            FDB   PSTOR
+1830 4b92 46 ba                            FDB   HLD
+1831 4b94 44 67                            FDB   AT
+1832 4b96 44 ab                            FDB   CSTOR
+1833 4b98 43 0d                            FDB   SEMIS
+1834                               
+1835 4b9a 83                               FCB   $83
+1836 4b9b 50 41                            FCC   'PA'
+1837 4b9d c4                               FCB   $C4
+1838 4b9e 4b 81                            FDB   HOLD-7
+1839 4ba0 44 e4                    PAD     FDB   DOCOL
+1840 4ba2 46 e9                            FDB   HERE
+1841 4ba4 40 37                            FDB   LIT
+1842 4ba6 00 44                            FDB   $44
+1843 4ba8 43 83                            FDB   PLUS
+1844 4baa 43 0d                            FDB   SEMIS
+1845                               
+1846 4bac 84                               FCB   $84
+1847 4bad 57 4f 52                         FCC   'WOR'
+1848 4bb0 c4                               FCB   $C4
+1849 4bb1 4b 9a                            FDB   PAD-6
+1850 4bb3 44 e4                    WORDS   FDB   DOCOL
+1851 4bb5 45 e4                            FDB   TIB
+1852 4bb7 44 67                            FDB   AT
+1853 4bb9 46 35                            FDB   INN
+1854 4bbb 44 67                            FDB   AT
+1855 4bbd 43 83                            FDB   PLUS
+1856 4bbf 44 0a                            FDB   SWAP
+1857 4bc1 41 5e                            FDB   ENCL
+1858 4bc3 46 e9                            FDB   HERE
+1859 4bc5 40 37                            FDB   LIT
+1860 4bc7 00 22                            FDB   $0022
+1861 4bc9 4b 79                            FDB   BLANK
+1862 4bcb 46 35                            FDB   INN
+1863 4bcd 44 40                            FDB   PSTOR
+1864 4bcf 43 ea                            FDB   OVER
+1865 4bd1 47 26                            FDB   SUBB
+1866 4bd3 43 2c                            FDB   TOR
+1867 4bd5 43 49                            FDB   RR
+1868 4bd7 46 e9                            FDB   HERE
+1869 4bd9 44 ab                            FDB   CSTOR
+1870 4bdb 43 83                            FDB   PLUS
+1871 4bdd 46 e9                            FDB   HERE
+1872 4bdf 46 c3                            FDB   ONEP
+1873 4be1 43 3b                            FDB   FROMR
+1874 4be3 41 ea                            FDB   CMOVE
+1875 4be5 43 0d                            FDB   SEMIS
+1876                               
+1877 4be7 88                               FCB   $88
+1878 4be8 28 4e 55 4d 42 45                FCC   '(NUMBER'
+     52
+1879 4bef a9                               FCB   $A9
+1880 4bf0 4b ac                            FDB   WORDS-7
+1881 4bf2 44 e4                    PNUMB   FDB   DOCOL
+1882 4bf4 46 c3                    PNUM1   FDB   ONEP
+1883 4bf6 44 1e                            FDB   DUP
+1884 4bf8 43 2c                            FDB   TOR
+1885 4bfa 44 76                            FDB   CAT
+1886 4bfc 46 89                            FDB   BASE
+1887 4bfe 44 67                            FDB   AT
+1888 4c00 40 d4                            FDB   DIGIT
+1889 4c02 40 6e                            FDB   ZBRAN
+1890 4c04 00 2c                            FDB   PNUM2-*
+1891 4c06 44 0a                            FDB   SWAP
+1892 4c08 46 89                            FDB   BASE
+1893 4c0a 44 67                            FDB   AT
+1894 4c0c 42 0b                            FDB   USTAR
+1895 4c0e 43 fb                            FDB   DROP
+1896 4c10 47 8b                            FDB   ROT
+1897 4c12 46 89                            FDB   BASE
+1898 4c14 44 67                            FDB   AT
+1899 4c16 42 0b                            FDB   USTAR
+1900 4c18 43 94                            FDB   DPLUS
+1901 4c1a 46 93                            FDB   DPL
+1902 4c1c 44 67                            FDB   AT
+1903 4c1e 46 c3                            FDB   ONEP
+1904 4c20 40 6e                            FDB   ZBRAN
+1905 4c22 00 08                            FDB   PNUM3-*
+1906 4c24 45 61                            FDB   ONE
+1907 4c26 46 93                            FDB   DPL
+1908 4c28 44 40                            FDB   PSTOR
+1909 4c2a 43 3b                    PNUM3   FDB   FROMR
+1910 4c2c 40 5a                            FDB   BRAN
+1911 4c2e ff c6                            FDB   PNUM1-*
+1912 4c30 43 3b                    PNUM2   FDB   FROMR
+1913 4c32 43 0d                            FDB   SEMIS
+1914                               
+1915 4c34 86                               FCB   $86
+1916 4c35 4e 55 4d 42 45                   FCC   'NUMBE'
+1917 4c3a d2                               FCB   $D2
+1918 4c3b 4b e7                            FDB   PNUMB-11
+1919 4c3d 44 e4                    NUMB    FDB   DOCOL
+1920 4c3f 45 59                            FDB   ZERO
+1921 4c41 45 59                            FDB   ZERO
+1922 4c43 47 8b                            FDB   ROT
+1923 4c45 44 1e                            FDB   DUP
+1924 4c47 46 c3                            FDB   ONEP
+1925 4c49 44 76                            FDB   CAT
+1926 4c4b 40 37                            FDB   LIT
+1927 4c4d 00 2d                            FDB   $2D
+1928 4c4f 47 38                            FDB   EQUAL
+1929 4c51 44 1e                            FDB   DUP
+1930 4c53 43 2c                            FDB   TOR
+1931 4c55 43 83                            FDB   PLUS
+1932 4c57 40 37                            FDB   LIT
+1933 4c59 ff ff                            FDB   -1
+1934 4c5b 46 93                    NUMB1   FDB   DPL
+1935 4c5d 44 9a                            FDB   STORE
+1936 4c5f 4b f2                            FDB   PNUMB
+1937 4c61 44 1e                            FDB   DUP
+1938 4c63 44 76                            FDB   CAT
+1939 4c65 45 7a                            FDB   BLS
+1940 4c67 47 26                            FDB   SUBB
+1941 4c69 40 6e                            FDB   ZBRAN
+1942 4c6b 00 16                            FDB   NUMB2-*
+1943 4c6d 44 1e                            FDB   DUP
+1944 4c6f 44 76                            FDB   CAT
+1945 4c71 40 37                            FDB   LIT
+1946 4c73 00 2e                            FDB   $2E
+1947 4c75 47 26                            FDB   SUBB
+1948 4c77 45 59                            FDB   ZERO
+1949 4c79 48 5a                            FDB   QERR
+1950 4c7b 45 59                            FDB   ZERO
+1951 4c7d 40 5a                            FDB   BRAN
+1952 4c7f ff dc                            FDB   NUMB1-*
+1953 4c81 43 fb                    NUMB2   FDB   DROP
+1954 4c83 43 3b                            FDB   FROMR
+1955 4c85 40 6e                            FDB   ZBRAN
+1956 4c87 00 04                            FDB   NUMB3-*
+1957 4c89 43 c9                            FDB   DMINU
+1958 4c8b 43 0d                    NUMB3   FDB   SEMIS
+1959                               
+1960 4c8d 85                               FCB   $85
+1961 4c8e 2d 46 49 4e                      FCC   '-FIN'
+1962 4c92 c4                               FCB   $C4
+1963 4c93 4c 34                            FDB   NUMB-9
+1964 4c95 44 e4                    DFIND   FDB   DOCOL
+1965 4c97 45 7a                            FDB   BLS
+1966 4c99 4b b3                            FDB   WORDS
+1967 4c9b 46 e9                            FDB   HERE
+1968 4c9d 46 64                            FDB   CONT
+1969 4c9f 44 67                            FDB   AT
+1970 4ca1 44 67                            FDB   AT
+1971 4ca3 41 0c                            FDB   PFIND
+1972 4ca5 44 1e                            FDB   DUP
+1973 4ca7 43 50                            FDB   ZEQU
+1974 4ca9 40 6e                            FDB   ZBRAN
+1975 4cab 00 0a                            FDB   DFIN1-*
+1976 4cad 43 fb                            FDB   DROP
+1977 4caf 46 e9                            FDB   HERE
+1978 4cb1 47 ee                            FDB   LATES
+1979 4cb3 41 0c                            FDB   PFIND
+1980 4cb5 43 0d                    DFIN1   FDB   SEMIS
+1981                               
+1982 4cb7 87                               FCB   $87
+1983 4cb8 28 41 42 4f 52 54                FCC   '(ABORT'
+1984 4cbe a9                               FCB   $A9
+1985 4cbf 4c 8d                            FDB   DFIND-8
+1986 4cc1 44 e4                    PABOR   FDB   DOCOL
+1987 4cc3 4f 08                            FDB   ABORT
+1988 4cc5 43 0d                            FDB   SEMIS
+1989                               
+1990 4cc7 85                               FCB   $85
+1991 4cc8 45 52 52 4f                      FCC   'ERRO'
+1992 4ccc d2                               FCB   $D2
+1993 4ccd 4c b7                            FDB   PABOR-10
+1994 4ccf 44 e4                    ERROR   FDB   DOCOL
+1995 4cd1 45 fe                            FDB   WARN
+1996 4cd3 44 67                            FDB   AT
+1997 4cd5 43 6a                            FDB   ZLESS
+1998 4cd7 40 6e                            FDB   ZBRAN
+1999 4cd9 00 04                            FDB   ERRO1-*
+2000 4cdb 4c c1                            FDB   PABOR
+2001 4cdd 46 e9                    ERRO1   FDB   HERE
+2002 4cdf 49 bf                            FDB   COUNT
+2003 4ce1 49 d2                            FDB   TYPES
+2004 4ce3 4a 33                            FDB   PDOTQ
+2005 4ce5 02                               FCB   2
+2006 4ce6 3f 20                            FCC   '? '
+2007 4ce8 51 41                            FDB   MESS
+2008 4cea 42 d9                            FDB   SPSTO
+2009 4cec 46 2c                            FDB   BLK
+2010 4cee 44 67                            FDB   AT
+2011 4cf0 47 b2                            FDB   DDUP
+2012 4cf2 40 6e                            FDB   ZBRAN
+2013 4cf4 00 08                            FDB   ERR02-*
+2014 4cf6 46 35                            FDB   INN
+2015 4cf8 44 67                            FDB   AT
+2016 4cfa 44 0a                            FDB   SWAP
+2017 4cfc 4e d9                    ERR02   FDB   QUIT
+2018 4cfe 43 0d                            FDB   SEMIS          ; Never executed
+2019                               
+2020 4d00 83                               FCB   $83
+2021 4d01 49 44                            FCC   'ID'
+2022 4d03 ae                               FCB   $AE
+2023 4d04 4c c7                            FDB   ERROR-8
+2024 4d06 44 e4                    IDDOT   FDB   DOCOL
+2025 4d08 4b a0                            FDB   PAD
+2026 4d0a 40 37                            FDB   LIT
+2027 4d0c 00 20                            FDB   $20
+2028 4d0e 40 37                            FDB   LIT
+2029 4d10 00 5f                            FDB   $5F
+2030 4d12 4b 4e                            FDB   FILL
+2031 4d14 44 1e                            FDB   DUP
+2032 4d16 48 32                            FDB   PFA
+2033 4d18 47 fe                            FDB   LFA
+2034 4d1a 43 ea                            FDB   OVER
+2035 4d1c 47 26                            FDB   SUBB
+2036 4d1e 4b a0                            FDB   PAD
+2037 4d20 44 0a                            FDB   SWAP
+2038 4d22 41 ea                            FDB   CMOVE
+2039 4d24 4b a0                            FDB   PAD
+2040 4d26 49 bf                            FDB   COUNT
+2041 4d28 40 37                            FDB   LIT
+2042 4d2a 00 1f                            FDB   $1F
+2043 4d2c 42 8e                            FDB   ANDD
+2044 4d2e 49 d2                            FDB   TYPES
+2045 4d30 47 a3                            FDB   SPACE
+2046 4d32 43 0d                            FDB   SEMIS
+2047                               
+2048 4d34 86                               FCB   $86
+2049 4d35 43 52 45 41 54                   FCC   'CREAT'
+2050 4d3a c5                               FCB   $C5
+2051 4d3b 4d 00                            FDB   IDDOT-6
+2052 4d3d 44 e4                    CREAT   FDB   DOCOL
+2053 4d3f 4c 95                            FDB   DFIND
+2054 4d41 40 6e                            FDB   ZBRAN
+2055 4d43 00 10                            FDB   CREAT1-*
+2056 4d45 43 fb                            FDB   DROP
+2057 4d47 48 1c                            FDB   NFA
+2058 4d49 4d 06                            FDB   IDDOT
+2059 4d4b 40 37                            FDB   LIT
+2060 4d4d 00 04                            FDB   4
+2061 4d4f 51 41                            FDB   MESS
+2062 4d51 47 a3                            FDB   SPACE
+2063 4d53 46 e9                    CREAT1  FDB   HERE
+2064 4d55 44 1e                            FDB   DUP
+2065 4d57 44 76                            FDB   CAT
+2066 4d59 45 f0                            FDB   WIDTH
+2067 4d5b 44 67                            FDB   AT
+2068 4d5d 50 53                            FDB   MIN
+2069 4d5f 46 c3                            FDB   ONEP
+2070 4d61 46 f9                            FDB   ALLOT
+2071 4d63 44 1e                            FDB   DUP
+2072 4d65 40 37                            FDB   LIT
+2073 4d67 00 a0                            FDB   $A0
+2074 4d69 44 57                            FDB   TOGGL
+2075 4d6b 46 e9                            FDB   HERE
+2076 4d6d 45 61                            FDB   ONE
+2077 4d6f 47 26                            FDB   SUBB
+2078 4d71 40 37                            FDB   LIT
+2079 4d73 00 80                            FDB   $80
+2080 4d75 44 57                            FDB   TOGGL
+2081 4d77 47 ee                            FDB   LATES
+2082 4d79 47 05                            FDB   COMMA
+2083 4d7b 46 72                            FDB   CURR
+2084 4d7d 44 67                            FDB   AT
+2085 4d7f 44 9a                            FDB   STORE
+2086 4d81 46 e9                            FDB   HERE
+2087 4d83 46 d5                            FDB   TWOP
+2088 4d85 47 05                            FDB   COMMA
+2089 4d87 43 0d                            FDB   SEMIS
+2090                               
+2091 4d89 c9                               FCB   $C9
+2092 4d8a 5b 43 4f 4d 50 49                FCC   '[COMPILE'
+     4c 45
+2093 4d92 dd                               FCB   $DD
+2094 4d93 4d 34                            FDB   CREAT-9
+2095 4d95 44 e4                    BCOMP   FDB   DOCOL
+2096 4d97 4c 95                            FDB   DFIND
+2097 4d99 43 50                            FDB   ZEQU
+2098 4d9b 45 59                            FDB   ZERO
+2099 4d9d 48 5a                            FDB   QERR
+2100 4d9f 43 fb                            FDB   DROP
+2101 4da1 48 0e                            FDB   CFA
+2102 4da3 47 05                            FDB   COMMA
+2103 4da5 43 0d                            FDB   SEMIS
+2104                               
+2105 4da7 c7                               FCB   $C7
+2106 4da8 4c 49 54 45 52 41                FCC   'LITERA'
+2107 4dae cc                               FCB   $CC
+2108 4daf 4d 89                            FDB   BCOMP-12
+2109 4db1 44 e4                    LITER   FDB   DOCOL
+2110 4db3 46 7e                            FDB   STATE
+2111 4db5 44 67                            FDB   AT
+2112 4db7 40 6e                            FDB   ZBRAN
+2113 4db9 00 08                            FDB   LITE1-*
+2114 4dbb 48 ed                            FDB   COMP
+2115 4dbd 40 37                            FDB   LIT
+2116 4dbf 47 05                            FDB   COMMA
+2117 4dc1 43 0d                    LITE1   FDB   SEMIS
+2118                               
+2119 4dc3 c8                               FCB   $C8
+2120 4dc4 44 4c 49 54 45 52                FCC   'DLITERA'
+     41
+2121 4dcb cc                               FCB   $CC
+2122 4dcc 4d a7                            FDB   LITER-10
+2123 4dce 44 e4                    DLITE   FDB   DOCOL
+2124 4dd0 46 7e                            FDB   STATE
+2125 4dd2 44 67                            FDB   AT
+2126 4dd4 40 6e                            FDB   ZBRAN
+2127 4dd6 00 08                            FDB   DLIT1-*
+2128 4dd8 44 0a                            FDB   SWAP
+2129 4dda 4d b1                            FDB   LITER
+2130 4ddc 4d b1                            FDB   LITER
+2131 4dde 43 0d                    DLIT1   FDB   SEMIS
+2132                               
+2133 4de0 86                               FCB   $86
+2134 4de1 3f 53 54 41 43                   FCC   '?STAC'
+2135 4de6 cb                               FCB   $CB
+2136 4de7 4d c3                            FDB   DLITE-11
+2137 4de9 44 e4                    QSTAC   FDB   DOCOL
+2138 4deb 42 c9                            FDB   SPAT
+2139 4ded 45 d1                            FDB   SZERO
+2140 4def 44 67                            FDB   AT
+2141 4df1 44 0a                            FDB   SWAP
+2142 4df3 47 5d                            FDB   ULESS
+2143 4df5 45 61                            FDB   ONE
+2144 4df7 48 5a                            FDB   QERR
+2145 4df9 42 c9                            FDB   SPAT
+2146 4dfb 46 e9                            FDB   HERE
+2147 4dfd 40 37                            FDB   LIT
+2148 4dff 00 80                            FDB   $80
+2149 4e01 43 83                            FDB   PLUS
+2150 4e03 47 5d                            FDB   ULESS
+2151 4e05 40 37                            FDB   LIT
+2152 4e07 00 07                            FDB   7
+2153 4e09 48 5a                            FDB   QERR
+2154 4e0b 43 0d                            FDB   SEMIS
+2155                               
+2156 4e0d 89                               FCB   $89
+2157 4e0e 49 4e 54 45 52 50                FCC   'INTERPRE'
+     52 45
+2158 4e16 d4                               FCB   $D4
+2159 4e17 4d e0                            FDB   QSTAC-9
+2160 4e19 44 e4                    INTER   FDB   DOCOL
+2161 4e1b 4c 95                    INTE1   FDB   DFIND
+2162 4e1d 40 6e                            FDB   ZBRAN
+2163 4e1f 00 1e                            FDB   INTE2-*
+2164 4e21 46 7e                            FDB   STATE
+2165 4e23 44 67                            FDB   AT
+2166 4e25 47 44                            FDB   LESS
+2167 4e27 40 6e                            FDB   ZBRAN
+2168 4e29 00 0a                            FDB   INTE3-*
+2169 4e2b 48 0e                            FDB   CFA
+2170 4e2d 47 05                            FDB   COMMA
+2171 4e2f 40 5a                            FDB   BRAN
+2172 4e31 00 06                            FDB   INTE4-*
+2173 4e33 48 0e                    INTE3   FDB   CFA
+2174 4e35 40 4b                            FDB   EXEC
+2175 4e37 4d e9                    INTE4   FDB   QSTAC
+2176 4e39 40 5a                            FDB   BRAN
+2177 4e3b 00 1c                            FDB   INTE5-*
+2178 4e3d 46 e9                    INTE2   FDB   HERE
+2179 4e3f 4c 3d                            FDB   NUMB
+2180 4e41 46 93                            FDB   DPL
+2181 4e43 44 67                            FDB   AT
+2182 4e45 46 c3                            FDB   ONEP
+2183 4e47 40 6e                            FDB   ZBRAN
+2184 4e49 00 08                            FDB   INTE6-*
+2185 4e4b 4d ce                            FDB   DLITE
+2186 4e4d 40 5a                            FDB   BRAN
+2187 4e4f 00 06                            FDB   INTE7-*
+2188 4e51 43 fb                    INTE6   FDB   DROP
+2189 4e53 4d b1                            FDB   LITER
+2190 4e55 4d e9                    INTE7   FDB   QSTAC
+2191 4e57 40 5a                    INTE5   FDB   BRAN
+2192 4e59 ff c2                            FDB   INTE1-*
+2193 4e5b 43 0d                            FDB   SEMIS          ; Never executed
+2194                               
+2195 4e5d 89                               FCB   $89
+2196 4e5e 49 4d 4d 45 44 49                FCC   'IMMEDIAT'
+     41 54
+2197 4e66 c5                               FCB   $C5
+2198 4e67 4e 0d                            FDB   INTER-12
+2199 4e69 44 e4                    IMMED   FDB   DOCOL
+2200 4e6b 47 ee                            FDB   LATES
+2201 4e6d 40 37                            FDB   LIT
+2202 4e6f 00 40                            FDB   $40
+2203 4e71 44 57                            FDB   TOGGL
+2204 4e73 43 0d                            FDB   SEMIS
+2205                               
+2206 4e75 8a                               FCB   $8A
+2207 4e76 56 4f 43 41 42 55                FCC   'VOCABULAR'
+     4c 41 52
+2208 4e7f d9                               FCB   $D9
+2209 4e80 4e 5d                            FDB   IMMED-12
+2210 4e82 44 e4                    VOCAB   FDB   DOCOL
+2211 4e84 49 90                            FDB   BUILD
+2212 4e86 40 37                            FDB   LIT
+2213 4e88 81 a0                            FDB   $81A0
+2214 4e8a 47 05                            FDB   COMMA
+2215 4e8c 46 72                            FDB   CURR
+2216 4e8e 44 67                            FDB   AT
+2217 4e90 48 0e                            FDB   CFA
+2218 4e92 47 05                            FDB   COMMA
+2219 4e94 46 e9                            FDB   HERE
+2220 4e96 46 22                            FDB   VOCL
+2221 4e98 44 67                            FDB   AT
+2222 4e9a 47 05                            FDB   COMMA
+2223 4e9c 46 22                            FDB   VOCL
+2224 4e9e 44 9a                            FDB   STORE
+2225 4ea0 49 a0                            FDB   DOES
+2226 4ea2 46 d5                    DOVOC   FDB   TWOP
+2227 4ea4 46 64                            FDB   CONT
+2228 4ea6 44 9a                            FDB   STORE
+2229 4ea8 43 0d                            FDB   SEMIS
+2230                               
+2231                               **************************************************
+2232                               *                                                *
+2233                               *       FORTH is not included here for the       *
+2234                               *       ROMable version because FORTH is a       *
+2235                               *       variable and must lie in RAM             *
+2236                               *                                                *
+2237                               **************************************************
+2238                               
+2239 4eaa 8b                               FCB   $8B
+2240 4eab 44 45 46 49 4e 49                FCC   'DEFINITION'
+     54 49 4f 4e
+2241 4eb5 d3                               FCB   $D3
+2242 4eb6 4e 75                            FDB   VOCAB-13
+2243 4eb8 44 e4                    DEFIN   FDB   DOCOL
+2244 4eba 46 64                            FDB   CONT
+2245 4ebc 44 67                            FDB   AT
+2246 4ebe 46 72                            FDB   CURR
+2247 4ec0 44 9a                            FDB   STORE
+2248 4ec2 43 0d                            FDB   SEMIS
+2249                               
+2250 4ec4 c1                               FCB   $C1
+2251 4ec5 a8                               FCB   $A8
+2252 4ec6 4e aa                            FDB   DEFIN-14
+2253 4ec8 44 e4                    PAREN   FDB   DOCOL
+2254 4eca 40 37                            FDB   LIT
+2255 4ecc 00 29                            FDB   $29
+2256 4ece 4b b3                            FDB   WORDS
+2257 4ed0 43 0d                            FDB   SEMIS
+2258                               
+2259 4ed2 84                               FCB   $84
+2260 4ed3 51 55 49                         FCC   'QUI'
+2261 4ed6 d4                               FCB   $D4
+2262 4ed7 4e c4                            FDB   PAREN-4
+2263 4ed9 44 e4                    QUIT    FDB   DOCOL
+2264 4edb 45 59                            FDB   ZERO
+2265 4edd 46 2c                            FDB   BLK
+2266 4edf 44 9a                            FDB   STORE
+2267 4ee1 49 03                            FDB   LBRAC
+2268 4ee3 42 fa                    QUIT1   FDB   RPSTO
+2269 4ee5 41 d2                            FDB   CR
+2270 4ee7 4a f7                            FDB   QUERY
+2271 4ee9 4e 19                            FDB   INTER
+2272 4eeb 46 7e                            FDB   STATE
+2273 4eed 44 67                            FDB   AT
+2274 4eef 43 50                            FDB   ZEQU
+2275 4ef1 40 6e                            FDB   ZBRAN
+2276 4ef3 00 07                            FDB   QUIT2-*
+2277 4ef5 4a 33                            FDB   PDOTQ
+2278 4ef7 02                               FCB   2
+2279 4ef8 6f 6b                            FCC   'ok'
+2280 4efa 40 5a                    QUIT2   FDB   BRAN
+2281 4efc ff e7                            FDB   QUIT1-*
+2282 4efe 43 0d                            FDB   SEMIS          ; Never executed
+2283                               
+2284 4f00 85                               FCB   $85
+2285 4f01 41 42 4f 52                      FCC   'ABOR'
+2286 4f05 d4                               FCB   $D4
+2287 4f06 4e d2                            FDB   QUIT-7
+2288 4f08 44 e4                    ABORT   FDB   DOCOL
+2289 4f0a 42 d9                            FDB   SPSTO
+2290 4f0c 49 4e                            FDB   DECA
+2291 4f0e 4d e9                            FDB   QSTAC
+2292 4f10 41 d2                            FDB   CR
+2293 4f12 20 08                            FDB   RFORTH
+2294 4f14 4e b8                            FDB   DEFIN
+2295 4f16 4e d9                            FDB   QUIT
+2296 4f18 43 0d                            FDB   SEMIS          ; Never executed
+2297                               
+2298 4f1a 84                               FCB   $84
+2299 4f1b 57 41 52                         FCC   'WAR'
+2300 4f1e cd                               FCB   $CD
+2301 4f1f 4f 00                            FDB   ABORT-8
+2302 4f21 44 e4                    WARM    FDB   DOCOL
+2303 4f23 4f 08                            FDB   ABORT
+2304 4f25 43 0d                            FDB   SEMIS          ; Never executed
+2305                               
+2306 4f27 84                               FCB   $84
+2307 4f28 43 4f 4c                         FCC   'COL'
+2308 4f2b c4                               FCB   $C4
+2309 4f2c 4f 1a                            FDB   WARM-7
+2310 4f2e 44 e4                    COLD    FDB   DOCOL
+2311 4f30 40 37                            FDB   LIT
+2312 4f32 40 1d                            FDB   UTABLE
+2313 4f34 40 37                            FDB   LIT
+2314 4f36 40 2d                            FDB   UP
+2315 4f38 44 67                            FDB   AT
+2316 4f3a 40 37                            FDB   LIT
+2317 4f3c 00 06                            FDB   6
+2318 4f3e 43 83                            FDB   PLUS
+2319 4f40 40 37                            FDB   LIT
+2320 4f42 00 10                            FDB   16
+2321 4f44 41 ea                            FDB   CMOVE
+2322 4f46 42 d9                            FDB   SPSTO
+2323 4f48 40 37                            FDB   LIT
+2324 4f4a 56 34                            FDB   FORTHS
+2325 4f4c 40 37                            FDB   LIT
+2326 4f4e 20 00                            FDB   RAMS
+2327 4f50 40 37                            FDB   LIT
+2328 4f52 00 1d                            FDB   TASKE-FORTHS
+2329 4f54 41 ea                            FDB   CMOVE
+2330 4f56 40 37                            FDB   LIT
+2331 4f58 40 1b                            FDB   TOP
+2332 4f5a 44 67                            FDB   AT
+2333 4f5c 40 37                            FDB   LIT
+2334 4f5e 20 0e                            FDB   RFORTH+6
+2335 4f60 44 9a                            FDB   STORE
+2336 4f62 41 d2                            FDB   CR
+2337 4f64 54 f3                            FDB   DOTCPU
+2338 4f66 4a 33                            FDB   PDOTQ
+2339 4f68 0e                               FCB   14
+2340 4f69 6d 69 63 72 6f 46                FCC   'microFORTH '
+     4f 52 54 48 20
+2341 4f74 31                               FCB   FIGREL+$30
+2342 4f75 2e                               FCB   ADOT
+2343 4f76 30                               FCB   FIGREV+$30
+2344 4f77 41 d2                            FDB   CR
+2345 4f79 4a 33                            FDB   PDOTQ
+2346 4f7b 2c                               FCB   44
+2347 4f7c 53 6f 75 74 68 65                FCC   'Southern Illinois University at Edwardsville'
+     72 6e 20 49 6c 6c
+     69 6e 6f 69 73 20
+     55 6e 69 76 65 72
+     73 69 74 79 20 61
+     74 20 45 64 77 61
+     72 64 73 76 69 6c
+     6c 65
+2348 4fa8 41 d2                            FDB   CR
+2349 4faa 4a 33                            FDB   PDOTQ
+2350 4fac 14                               FCB   20
+2351 4fad 4d 69 63 72 6f 2d                FCC   'Micro-controller Lab'
+     63 6f 6e 74 72 6f
+     6c 6c 65 72 20 4c
+     61 62
+2352 4fc1 41 d2                            FDB   CR
+2353 4fc3 4a 33                            FDB   PDOTQ
+2354 4fc5 1c                               FCB   28
+2355 4fc6 44 69 63 74 69 6f                FCC   'Dictionary space available: '
+     6e 61 72 79 20 73
+     70 61 63 65 20 61
+     76 61 69 6c 61 62
+     6c 65 3a 20
+2356 4fe2 42 c9                            FDB   SPAT
+2357 4fe4 46 13                            FDB   DP
+2358 4fe6 44 67                            FDB   AT
+2359 4fe8 47 26                            FDB   SUBB
+2360 4fea 49 38                            FDB   HEX ;DUP ;NOOP ;
+2361 4fec 54 32                            FDB   UDOT
+2362 4fee 4a 33                            FDB   PDOTQ
+2363 4ff0 05                               FCB   5
+2364 4ff1 62 79 74 65 73                   FCC   'bytes'
+2365 4ff6 41 d2                            FDB   CR
+2366 4ff8 4f 08                            FDB   ABORT
+2367 4ffa 43 0d                            FDB   SEMIS          ; Never executed
+2368                               
+2369 4ffc 84                               FCB   $84
+2370 4ffd 53 2d 3e                         FCC   'S->'
+2371 5000 c4                               FCB   $C4
+2372 5001 4f 27                            FDB   COLD-7
+2373 5003 44 e4                    STOD    FDB   DOCOL
+2374 5005 44 1e                            FDB   DUP
+2375 5007 43 6a                            FDB   ZLESS
+2376 5009 43 b4                            FDB   MINUS
+2377 500b 43 0d                            FDB   SEMIS
+2378                               
+2379 500d 82                               FCB   $82
+2380 500e 2b                               FCC   '+'
+2381 500f ad                               FCB   $AD
+2382 5010 4f fc                            FDB   STOD-7
+2383 5012 44 e4                    PM      FDB   DOCOL
+2384 5014 43 6a                            FDB   ZLESS
+2385 5016 40 6e                            FDB   ZBRAN
+2386 5018 00 04                            FDB   PM1-*
+2387 501a 43 b4                            FDB   MINUS
+2388 501c 43 0d                    PM1     FDB   SEMIS
+2389                               
+2390 501e 83                               FCB   $83
+2391 501f 44 2b                            FCC   'D+'
+2392 5021 ad                               FCB   $AD
+2393 5022 50 0d                            FDB   PM-5
+2394 5024 44 e4                    DPM     FDB   DOCOL
+2395 5026 43 6a                            FDB   ZLESS
+2396 5028 40 6e                            FDB   ZBRAN
+2397 502a 00 04                            FDB   DPM1-*
+2398 502c 43 c9                            FDB   DMINU
+2399 502e 43 0d                    DPM1    FDB   SEMIS
+2400                               
+2401 5030 83                               FCB   $83
+2402 5031 41 42                            FCC   'AB'
+2403 5033 d3                               FCB   $D3
+2404 5034 50 1e                            FDB   DPM-6
+2405 5036 44 e4                    ABS     FDB   DOCOL
+2406 5038 44 1e                            FDB   DUP
+2407 503a 50 12                            FDB   PM
+2408 503c 43 0d                            FDB   SEMIS
+2409                               
+2410 503e 84                               FCB   $84
+2411 503f 44 41 42                         FCC   'DAB'
+2412 5042 d3                               FCB   $D3
+2413 5043 50 30                            FDB   ABS-6
+2414 5045 44 e4                    DABS    FDB   DOCOL
+2415 5047 44 1e                            FDB   DUP
+2416 5049 50 24                            FDB   DPM
+2417 504b 43 0d                            FDB   SEMIS
+2418                               
+2419 504d 83                               FCB   $83
+2420 504e 4d 49                            FCC   'MI'
+2421 5050 ce                               FCB   $CE
+2422 5051 50 3e                            FDB   DABS-7
+2423 5053 44 e4                    MIN     FDB   DOCOL
+2424 5055 44 2f                            FDB   TDUP
+2425 5057 47 7d                            FDB   GREAT
+2426 5059 40 6e                            FDB   ZBRAN
+2427 505b 00 04                            FDB   MIN1-*
+2428 505d 44 0a                            FDB   SWAP
+2429 505f 43 fb                    MIN1    FDB   DROP
+2430 5061 43 0d                            FDB   SEMIS
+2431                               
+2432 5063 83                               FCB   $83
+2433 5064 4d 41                            FCC   'MA'
+2434 5066 d8                               FCB   $D8
+2435 5067 50 4d                            FDB   MIN-6
+2436 5069 44 e4                    MAX     FDB   DOCOL
+2437 506b 44 2f                            FDB   TDUP
+2438 506d 47 44                            FDB   LESS
+2439 506f 40 6e                            FDB   ZBRAN
+2440 5071 00 04                            FDB   MAX1-*
+2441 5073 44 0a                            FDB   SWAP
+2442 5075 43 fb                    MAX1    FDB   DROP
+2443 5077 43 0d                            FDB   SEMIS
+2444                               
+2445 5079 82                               FCB   $82
+2446 507a 4d                               FCC   'M'
+2447 507b aa                               FCB   $AA
+2448 507c 50 63                            FDB   MAX-6
+2449 507e 44 e4                    MSTAR   FDB   DOCOL
+2450 5080 44 2f                            FDB   TDUP
+2451 5082 42 b5                            FDB   XORR
+2452 5084 43 2c                            FDB   TOR
+2453 5086 50 36                            FDB   ABS
+2454 5088 44 0a                            FDB   SWAP
+2455 508a 50 36                            FDB   ABS
+2456 508c 42 0b                            FDB   USTAR
+2457 508e 43 3b                            FDB   FROMR
+2458 5090 50 24                            FDB   DPM
+2459 5092 43 0d                            FDB   SEMIS
+2460                               
+2461 5094 82                               FCB   $82
+2462 5095 4d                               FCC   'M'
+2463 5096 af                               FCB   $AF
+2464 5097 50 79                            FDB   MSTAR-5
+2465 5099 44 e4                    MSLAS   FDB   DOCOL
+2466 509b 43 ea                            FDB   OVER
+2467 509d 43 2c                            FDB   TOR
+2468 509f 43 2c                            FDB   TOR
+2469 50a1 50 45                            FDB   DABS
+2470 50a3 43 49                            FDB   RR
+2471 50a5 50 36                            FDB   ABS
+2472 50a7 42 48                            FDB   USLAS
+2473 50a9 43 3b                            FDB   FROMR
+2474 50ab 43 49                            FDB   RR
+2475 50ad 42 b5                            FDB   XORR
+2476 50af 50 12                            FDB   PM
+2477 50b1 44 0a                            FDB   SWAP
+2478 50b3 43 3b                            FDB   FROMR
+2479 50b5 50 12                            FDB   PM
+2480 50b7 44 0a                            FDB   SWAP
+2481 50b9 43 0d                            FDB   SEMIS
+2482                               
+2483 50bb 81                               FCB   $81
+2484 50bc aa                               FCB   $AA
+2485 50bd 50 94                            FDB   MSLAS-5
+2486 50bf 44 e4                    STAR    FDB   DOCOL
+2487 50c1 50 7e                            FDB   MSTAR
+2488 50c3 43 fb                            FDB   DROP
+2489 50c5 43 0d                            FDB   SEMIS
+2490                               
+2491 50c7 84                               FCB   $84
+2492 50c8 2f 4d 4f                         FCC   '/MO'
+2493 50cb c4                               FCB   $C4
+2494 50cc 50 bb                            FDB   STAR-4
+2495 50ce 44 e4                    SLMOD   FDB   DOCOL
+2496 50d0 43 2c                            FDB   TOR
+2497 50d2 50 03                            FDB   STOD
+2498 50d4 43 3b                            FDB   FROMR
+2499 50d6 50 99                            FDB   MSLAS
+2500 50d8 43 0d                            FDB   SEMIS
+2501                               
+2502 50da 81                               FCB   $81
+2503 50db af                               FCB   $AF
+2504 50dc 50 c7                            FDB   SLMOD-7
+2505 50de 44 e4                    SLASH   FDB   DOCOL
+2506 50e0 50 ce                            FDB   SLMOD
+2507 50e2 44 0a                            FDB   SWAP
+2508 50e4 43 fb                            FDB   DROP
+2509 50e6 43 0d                            FDB   SEMIS
+2510                               
+2511 50e8 83                               FCB   $83
+2512 50e9 4d 4f                            FCC   'MO'
+2513 50eb c4                               FCB   $C4
+2514 50ec 50 da                            FDB   SLASH-4
+2515 50ee 44 e4                    MOD     FDB   DOCOL
+2516 50f0 50 ce                            FDB   SLMOD
+2517 50f2 43 fb                            FDB   DROP
+2518 50f4 43 0d                            FDB   SEMIS
+2519                               
+2520 50f6 85                               FCB   $85
+2521 50f7 2a 2f 4d 4f                      FCC   '*/MO'
+2522 50fb c4                               FCB   $C4
+2523 50fc 50 e8                            FDB   MOD-6
+2524 50fe 44 e4                    SSMOD   FDB   DOCOL
+2525 5100 43 2c                            FDB   TOR
+2526 5102 50 7e                            FDB   MSTAR
+2527 5104 43 3b                            FDB   FROMR
+2528 5106 50 99                            FDB   MSLAS
+2529 5108 43 0d                            FDB   SEMIS
+2530                               
+2531 510a 82                               FCB   $82
+2532 510b 2a                               FCC   '*'
+2533 510c af                               FCB   $AF
+2534 510d 50 f6                            FDB   SSMOD-8
+2535 510f 44 e4                    SSLASH  FDB   DOCOL
+2536 5111 50 fe                            FDB   SSMOD
+2537 5113 44 0a                            FDB   SWAP
+2538 5115 43 fb                            FDB   DROP
+2539 5117 43 0d                            FDB   SEMIS
+2540                               
+2541 5119 85                               FCB   $85
+2542 511a 4d 2f 4d 4f                      FCC   'M/MO'
+2543 511e c4                               FCB   $C4
+2544 511f 51 0a                            FDB   SSLASH-5
+2545 5121 44 e4                    MSMOD   FDB   DOCOL
+2546 5123 43 2c                            FDB   TOR
+2547 5125 45 59                            FDB   ZERO
+2548 5127 43 49                            FDB   RR
+2549 5129 42 48                            FDB   USLAS
+2550 512b 43 3b                            FDB   FROMR
+2551 512d 44 0a                            FDB   SWAP
+2552 512f 43 2c                            FDB   TOR
+2553 5131 42 48                            FDB   USLAS
+2554 5133 43 3b                            FDB   FROMR
+2555 5135 43 0d                            FDB   SEMIS
+2556                               
+2557 5137 87                               FCB   $87
+2558 5138 4d 45 53 53 41 47                FCC   'MESSAG'
+2559 513e c5                               FCB   $C5
+2560 513f 51 19                            FDB   MSMOD-8
+2561 5141 44 e4                    MESS    FDB   DOCOL
+2562 5143 45 fe                            FDB   WARN
+2563 5145 44 67                            FDB   AT
+2564 5147 40 6e                            FDB   ZBRAN
+2565 5149 00 25                            FDB   MESS1-*
+2566 514b 47 b2                            FDB   DDUP
+2567 514d 40 6e                            FDB   ZBRAN
+2568 514f 00 1b                            FDB   MESS2-*
+2569 5151 40 37                            FDB   LIT
+2570 5153 00 04                            FDB   4
+2571 5155 46 56                            FDB   OFSET
+2572 5157 44 67                            FDB   AT
+2573 5159 45 b4                            FDB   BSCR
+2574 515b 50 de                            FDB   SLASH
+2575 515d 47 26                            FDB   SUBB
+2576 515f 4a 33                            FDB   PDOTQ
+2577 5161 06                               FCB   6
+2578 5162 20 44 4c 49 4e 45                FCC   ' DLINE'
+2579 5168 47 a3                            FDB   SPACE
+2580 516a 40 5a                    MESS2   FDB   BRAN
+2581 516c 00 0d                            FDB   MESS3-*
+2582 516e 4a 33                    MESS1   FDB   PDOTQ
+2583 5170 06                               FCB   6
+2584 5171 4d 53 47 20 23 20                FCC   'MSG # '
+2585 5177 54 19                            FDB   DOT
+2586 5179 43 0d                    MESS3   FDB   SEMIS
+2587                               
+2588 517b 51 7d                    PKEY    FDB   *+2
+2589 517d b6 ff d0           [ 5 ] PKEY1   LDA   ACIAC          ; Get control status of the ACIA
+2590 5180 47                 [ 2 ]         ASRA                 ; Check if buffer is empty
+2591 5181 24 fa              [ 3 ]         BCC   PKEY1          ; If so, wait
+2592 5183 f6 ff d1           [ 5 ]         LDB   ACIAD          ; Get data
+2593 5186 4f                 [ 2 ]         CLRA
+2594 5187 36 06              [ 7 ]         PSHU  D              ; Push character to the stack
+2595 5189 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+2596 518b 6e 91              [ 9 ]         JMP   [,X++]
+2597                               
+2598 518d 51 8f                    PQTER   FDB   *+2
+2599 518f b6 ff d0           [ 5 ]         LDA   ACIAC          ; Get control status of the ACIA
+2600 5192 47                 [ 2 ]         ASRA                 ; Check if buffer is empty
+2601 5193 24 08              [ 3 ]         BCC   PQTER1         ; If so push ZERO flag
+2602 5195 f6 ff d1           [ 5 ]         LDB   ACIAD          ; If not, get key
+2603 5198 4f                 [ 2 ]         CLRA
+2604 5199 36 06              [ 7 ]         PSHU  D
+2605 519b 20 05              [ 3 ]         BRA   PQTER2         ; Go do NEXT
+2606 519d cc 00 00           [ 3 ] PQTER1  LDD   #0
+2607 51a0 36 06              [ 7 ]         PSHU  D              ; Push flag
+2608 51a2 ae a1              [ 8 ] PQTER2  LDX   ,Y++           ; NEXT
+2609 51a4 6e 91              [ 9 ]         JMP   [,X++]
+2610                               
+2611 51a6 51 a8                    PEMIT   FDB   *+2
+2612 51a8 37 06              [ 7 ]         PULU  D              ; Character in B register
+2613 51aa c4 7f              [ 2 ]         ANDB  #$7F           ; Mask off the highest bit
+2614 51ac b6 ff d0           [ 5 ] PEMIT1  LDA   ACIAC          ; Get ACIA status
+2615 51af 47                 [ 2 ]         ASRA                 ; Check if ready to transmit
+2616 51b0 47                 [ 2 ]         ASRA
+2617 51b1 24 f9              [ 3 ]         BCC   PEMIT1         ; Loop if not ready
+2618 51b3 f7 ff d1           [ 5 ]         STB   ACIAD          ; Transmit character
+2619 51b6 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+2620 51b8 6e 91              [ 9 ]         JMP   [,X++]
+2621                               
+2622 51ba c1                               FCB   $C1
+2623 51bb a7                               FCB   $A7
+2624 51bc 51 37                            FDB   MESS-10
+2625 51be 44 e4                    TICK    FDB   DOCOL
+2626 51c0 4c 95                            FDB   DFIND
+2627 51c2 43 50                            FDB   ZEQU
+2628 51c4 45 59                            FDB   ZERO
+2629 51c6 48 5a                            FDB   QERR
+2630 51c8 43 fb                            FDB   DROP
+2631 51ca 4d b1                            FDB   LITER
+2632 51cc 43 0d                            FDB   SEMIS
+2633                               
+2634 51ce 86                               FCB   $86
+2635 51cf 46 4f 52 47 45                   FCC   'FORGE'
+2636 51d4 d4                               FCB   $D4
+2637 51d5 51 ba                            FDB   TICK-4
+2638 51d7 44 e4                    FORGET  FDB   DOCOL
+2639 51d9 46 72                            FDB   CURR
+2640 51db 44 67                            FDB   AT
+2641 51dd 46 64                            FDB   CONT
+2642 51df 44 67                            FDB   AT
+2643 51e1 47 26                            FDB   SUBB
+2644 51e3 40 37                            FDB   LIT
+2645 51e5 00 18                            FDB   $18
+2646 51e7 48 5a                            FDB   QERR
+2647 51e9 51 be                            FDB   TICK
+2648 51eb 44 1e                            FDB   DUP
+2649 51ed 46 0a                            FDB   FENCE
+2650 51ef 44 67                            FDB   AT
+2651 51f1 47 44                            FDB   LESS
+2652 51f3 40 37                            FDB   LIT
+2653 51f5 00 15                            FDB   $15
+2654 51f7 48 5a                            FDB   QERR
+2655 51f9 44 1e                            FDB   DUP
+2656 51fb 48 1c                            FDB   NFA
+2657 51fd 46 13                            FDB   DP
+2658 51ff 44 9a                            FDB   STORE
+2659 5201 47 fe                            FDB   LFA
+2660 5203 44 67                            FDB   AT
+2661 5205 46 64                            FDB   CONT
+2662 5207 44 67                            FDB   AT
+2663 5209 44 9a                            FDB   STORE
+2664 520b 43 0d                            FDB   SEMIS
+2665                               
+2666 520d 84                               FCB   $84
+2667 520e 42 41 43                         FCC   'BAC'
+2668 5211 cb                               FCB   $CB
+2669 5212 51 ce                            FDB   FORGET-9
+2670 5214 44 e4                    BACK    FDB   DOCOL
+2671 5216 46 e9                            FDB   HERE
+2672 5218 47 26                            FDB   SUBB
+2673 521a 47 05                            FDB   COMMA
+2674 521c 43 0d                            FDB   SEMIS
+2675                               
+2676 521e c5                               FCB   $C5
+2677 521f 42 45 47 49                      FCC   'BEGI'
+2678 5223 ce                               FCB   $CE
+2679 5224 52 0d                            FDB   BACK-7
+2680 5226 44 e4                    BEGIN   FDB   DOCOL
+2681 5228 48 74                            FDB   QCOMP
+2682 522a 46 e9                            FDB   HERE
+2683 522c 45 61                            FDB   ONE
+2684 522e 43 0d                            FDB   SEMIS
+2685                               
+2686 5230 c5                               FCB   $C5
+2687 5231 45 4e 44 49                      FCC   'ENDI'
+2688 5235 c6                               FCB   $C6
+2689 5236 52 1e                            FDB   BEGIN-8
+2690 5238 44 e4                    ENDIFF  FDB   DOCOL
+2691 523a 48 74                            FDB   QCOMP
+2692 523c 45 69                            FDB   TWO
+2693 523e 48 a3                            FDB   QPAIR
+2694 5240 46 e9                            FDB   HERE
+2695 5242 43 ea                            FDB   OVER
+2696 5244 47 26                            FDB   SUBB
+2697 5246 44 0a                            FDB   SWAP
+2698 5248 44 9a                            FDB   STORE
+2699 524a 43 0d                            FDB   SEMIS
+2700                               
+2701 524c c4                               FCB   $C4
+2702 524d 54 48 45                         FCC   'THE'
+2703 5250 ce                               FCB   $CE
+2704 5251 52 30                            FDB   ENDIFF-8
+2705 5253 44 e4                    THEN    FDB   DOCOL
+2706 5255 52 38                            FDB   ENDIFF
+2707 5257 43 0d                            FDB   SEMIS
+2708                               
+2709 5259 c2                               FCB   $C2
+2710 525a 44                               FCC   'D'
+2711 525b cf                               FCB   $CF
+2712 525c 52 4c                            FDB   THEN-7
+2713 525e 44 e4                    DO      FDB   DOCOL
+2714 5260 48 ed                            FDB   COMP
+2715 5262 40 b4                            FDB   XDO
+2716 5264 46 e9                            FDB   HERE
+2717 5266 45 71                            FDB   THREE
+2718 5268 43 0d                            FDB   SEMIS
+2719                               
+2720 526a c4                               FCB   $C4
+2721 526b 4c 4f 4f                         FCC   'LOO'
+2722 526e d0                               FCB   $D0
+2723 526f 52 59                            FDB   DO-5
+2724 5271 44 e4                    LOOPC   FDB   DOCOL
+2725 5273 45 71                            FDB   THREE
+2726 5275 48 a3                            FDB   QPAIR
+2727 5277 48 ed                            FDB   COMP
+2728 5279 40 87                            FDB   XLOOP
+2729 527b 52 14                            FDB   BACK
+2730 527d 43 0d                            FDB   SEMIS
+2731                               
+2732 527f c5                               FCB   $C5
+2733 5280 2b 4c 4f 4f                      FCC   '+LOO'
+2734 5284 d0                               FCB   $D0
+2735 5285 52 6a                            FDB   LOOPC-7
+2736 5287 44 e4                    PLOOP   FDB   DOCOL
+2737 5289 45 71                            FDB   THREE
+2738 528b 48 a3                            FDB   QPAIR
+2739 528d 48 ed                            FDB   COMP
+2740 528f 40 a7                            FDB   XPLOO
+2741 5291 52 14                            FDB   BACK
+2742 5293 43 0d                            FDB   SEMIS
+2743                               
+2744 5295 c5                               FCB   $C5
+2745 5296 55 4e 54 49                      FCC   'UNTI'
+2746 529a cc                               FCB   $CC
+2747 529b 52 7f                            FDB   PLOOP-8
+2748 529d 44 e4                    UNTIL   FDB   DOCOL
+2749 529f 45 61                            FDB   ONE
+2750 52a1 48 a3                            FDB   QPAIR
+2751 52a3 48 ed                            FDB   COMP
+2752 52a5 40 6e                            FDB   ZBRAN
+2753 52a7 52 14                            FDB   BACK
+2754 52a9 43 0d                            FDB   SEMIS
+2755                               
+2756 52ab c3                               FCB   $C3
+2757 52ac 45 4e                            FCC   'EN'
+2758 52ae c4                               FCB   $C4
+2759 52af 52 95                            FDB   UNTIL-8
+2760 52b1 44 e4                    END     FDB   DOCOL
+2761 52b3 52 9d                            FDB   UNTIL
+2762 52b5 43 0d                            FDB   SEMIS
+2763                               
+2764 52b7 c5                               FCB   $C5
+2765 52b8 41 47 41 49                      FCC   'AGAI'
+2766 52bc ce                               FCB   $CE
+2767 52bd 52 ab                            FDB   END-6
+2768 52bf 44 e4                    AGAIN   FDB   DOCOL
+2769 52c1 45 61                            FDB   ONE
+2770 52c3 48 a3                            FDB   QPAIR
+2771 52c5 48 ed                            FDB   COMP
+2772 52c7 40 5a                            FDB   BRAN
+2773 52c9 52 14                            FDB   BACK
+2774 52cb 43 0d                            FDB   SEMIS
+2775                               
+2776 52cd c6                               FCB   $C6
+2777 52ce 52 45 50 45 41                   FCC   'REPEA'
+2778 52d3 d4                               FCB   $D4
+2779 52d4 52 b7                            FDB   AGAIN-8
+2780 52d6 44 e4                    REPEAT  FDB   DOCOL
+2781 52d8 43 2c                            FDB   TOR
+2782 52da 43 2c                            FDB   TOR
+2783 52dc 52 bf                            FDB   AGAIN
+2784 52de 43 3b                            FDB   FROMR
+2785 52e0 43 3b                            FDB   FROMR
+2786 52e2 45 69                            FDB   TWO
+2787 52e4 47 26                            FDB   SUBB
+2788 52e6 52 38                            FDB   ENDIFF
+2789 52e8 43 0d                            FDB   SEMIS
+2790                               
+2791 52ea c2                               FCB   $C2
+2792 52eb 49                               FCC   'I'
+2793 52ec c6                               FCB   $C6
+2794 52ed 52 cd                            FDB   REPEAT-9
+2795 52ef 44 e4                    IF      FDB   DOCOL
+2796 52f1 48 ed                            FDB   COMP
+2797 52f3 40 6e                            FDB   ZBRAN
+2798 52f5 46 e9                            FDB   HERE
+2799 52f7 45 59                            FDB   ZERO
+2800 52f9 47 05                            FDB   COMMA
+2801 52fb 45 69                            FDB   TWO
+2802 52fd 43 0d                            FDB   SEMIS
+2803                               
+2804 52ff c4                               FCB   $C4
+2805 5300 45 4c 53                         FCC   'ELS'
+2806 5303 c5                               FCB   $C5
+2807 5304 52 ea                            FDB   IF-5
+2808 5306 44 e4                    ELSE    FDB   DOCOL
+2809 5308 45 69                            FDB   TWO
+2810 530a 48 a3                            FDB   QPAIR
+2811 530c 48 ed                            FDB   COMP
+2812 530e 40 5a                            FDB   BRAN
+2813 5310 46 e9                            FDB   HERE
+2814 5312 45 59                            FDB   ZERO
+2815 5314 47 05                            FDB   COMMA
+2816 5316 44 0a                            FDB   SWAP
+2817 5318 45 69                            FDB   TWO
+2818 531a 52 38                            FDB   ENDIFF
+2819 531c 45 69                            FDB   TWO
+2820 531e 43 0d                            FDB   SEMIS
+2821                               
+2822 5320 c5                               FCB   $C5
+2823 5321 57 48 49 4c                      FCC   'WHIL'
+2824 5325 c5                               FCB   $C5
+2825 5326 52 ff                            FDB   ELSE-7
+2826 5328 44 e4                    WHILE   FDB   DOCOL
+2827 532a 52 ef                            FDB   IF
+2828 532c 46 d5                            FDB   TWOP
+2829 532e 43 0d                            FDB   SEMIS
+2830                               
+2831 5330 86                               FCB   $86
+2832 5331 53 50 41 43 45                   FCC   'SPACE'
+2833 5336 d3                               FCB   $D3
+2834 5337 53 20                            FDB   WHILE-8
+2835 5339 44 e4                    SPACS   FDB   DOCOL
+2836 533b 45 59                            FDB   ZERO
+2837 533d 50 69                            FDB   MAX
+2838 533f 47 b2                            FDB   DDUP
+2839 5341 40 6e                            FDB   ZBRAN
+2840 5343 00 0c                            FDB   SPAC2-*
+2841 5345 45 59                            FDB   ZERO
+2842 5347 40 b4                            FDB   XDO
+2843 5349 47 a3                    SPAC1   FDB   SPACE
+2844 534b 40 87                            FDB   XLOOP
+2845 534d ff fc                            FDB   SPAC1-*
+2846 534f 43 0d                    SPAC2   FDB   SEMIS
+2847                               
+2848 5351 82                               FCB   $82
+2849 5352 3c                               FCC   '<'
+2850 5353 a3                               FCB   $A3
+2851 5354 53 30                            FDB   SPACS-9
+2852 5356 44 e4                    BDIGS   FDB   DOCOL
+2853 5358 4b a0                            FDB   PAD
+2854 535a 46 ba                            FDB   HLD
+2855 535c 44 9a                            FDB   STORE
+2856 535e 43 0d                            FDB   SEMIS
+2857                               
+2858 5360 82                               FCB   $82
+2859 5361 23                               FCC   '#'
+2860 5362 be                               FCB   $BE
+2861 5363 53 51                            FDB   BDIGS-5
+2862 5365 44 e4                    EDIGS   FDB   DOCOL
+2863 5367 43 fb                            FDB   DROP
+2864 5369 43 fb                            FDB   DROP
+2865 536b 46 ba                            FDB   HLD
+2866 536d 44 67                            FDB   AT
+2867 536f 4b a0                            FDB   PAD
+2868 5371 43 ea                            FDB   OVER
+2869 5373 47 26                            FDB   SUBB
+2870 5375 43 0d                            FDB   SEMIS
+2871                               
+2872 5377 84                               FCB   $84
+2873 5378 53 49 47                         FCC   'SIG'
+2874 537b ce                               FCB   $CE
+2875 537c 53 60                            FDB   EDIGS-5
+2876 537e 44 e4                    SIGN    FDB   DOCOL
+2877 5380 47 8b                            FDB   ROT
+2878 5382 43 6a                            FDB   ZLESS
+2879 5384 40 6e                            FDB   ZBRAN
+2880 5386 00 08                            FDB   SIGN1-*
+2881 5388 40 37                            FDB   LIT
+2882 538a 00 2d                            FDB   $2D
+2883 538c 4b 88                            FDB   HOLD
+2884 538e 43 0d                    SIGN1   FDB   SEMIS
+2885                               
+2886 5390 81                               FCB   $81
+2887 5391 a3                               FCB   $A3
+2888 5392 53 77                            FDB   SIGN-7
+2889 5394 44 e4                    DIG     FDB   DOCOL
+2890 5396 46 89                            FDB   BASE
+2891 5398 44 67                            FDB   AT
+2892 539a 51 21                            FDB   MSMOD
+2893 539c 47 8b                            FDB   ROT
+2894 539e 40 37                            FDB   LIT
+2895 53a0 00 09                            FDB   9
+2896 53a2 43 ea                            FDB   OVER
+2897 53a4 47 44                            FDB   LESS
+2898 53a6 40 6e                            FDB   ZBRAN
+2899 53a8 00 08                            FDB   DIG1-*
+2900 53aa 40 37                            FDB   LIT
+2901 53ac 00 07                            FDB   7
+2902 53ae 43 83                            FDB   PLUS
+2903 53b0 40 37                    DIG1    FDB   LIT
+2904 53b2 00 30                            FDB   $30
+2905 53b4 43 83                            FDB   PLUS
+2906 53b6 4b 88                            FDB   HOLD
+2907 53b8 43 0d                            FDB   SEMIS
+2908                               
+2909 53ba 82                               FCB   $82
+2910 53bb 23                               FCC   '#'
+2911 53bc d3                               FCB   $D3
+2912 53bd 53 90                            FDB   DIG-4
+2913 53bf 44 e4                    DIGS    FDB   DOCOL
+2914 53c1 53 94                    DIGS1   FDB   DIG
+2915 53c3 43 ea                            FDB   OVER
+2916 53c5 43 ea                            FDB   OVER
+2917 53c7 42 a1                            FDB   ORR
+2918 53c9 43 50                            FDB   ZEQU
+2919 53cb 40 6e                            FDB   ZBRAN
+2920 53cd ff f4                            FDB   DIGS1-*
+2921 53cf 43 0d                            FDB   SEMIS
+2922                               
+2923 53d1 83                               FCB   $83
+2924 53d2 44 2e                            FCC   'D.'
+2925 53d4 d2                               FCB   $D2
+2926 53d5 53 ba                            FDB   DIGS-5
+2927 53d7 44 e4                    DDOTR   FDB   DOCOL
+2928 53d9 43 2c                            FDB   TOR
+2929 53db 44 0a                            FDB   SWAP
+2930 53dd 43 ea                            FDB   OVER
+2931 53df 50 45                            FDB   DABS
+2932 53e1 53 56                            FDB   BDIGS
+2933 53e3 53 bf                            FDB   DIGS
+2934 53e5 53 7e                            FDB   SIGN
+2935 53e7 53 65                            FDB   EDIGS
+2936 53e9 43 3b                            FDB   FROMR
+2937 53eb 43 ea                            FDB   OVER
+2938 53ed 47 26                            FDB   SUBB
+2939 53ef 53 39                            FDB   SPACS
+2940 53f1 49 d2                            FDB   TYPES
+2941 53f3 43 0d                            FDB   SEMIS
+2942                               
+2943 53f5 82                               FCB   $82
+2944 53f6 2e                               FCC   '.'
+2945 53f7 d2                               FCB   $D2
+2946 53f8 53 d1                            FDB   DDOTR-6
+2947 53fa 44 e4                    DOTR    FDB   DOCOL
+2948 53fc 43 2c                            FDB   TOR
+2949 53fe 50 03                            FDB   STOD
+2950 5400 43 3b                            FDB   FROMR
+2951 5402 53 d7                            FDB   DDOTR
+2952 5404 43 0d                            FDB   SEMIS
+2953                               
+2954 5406 82                               FCB   $82
+2955 5407 44                               FCC   'D'
+2956 5408 ae                               FCB   $AE
+2957 5409 53 f5                            FDB   DOTR-5
+2958 540b 44 e4                    DDOT    FDB   DOCOL
+2959 540d 45 59                            FDB   ZERO
+2960 540f 53 d7                            FDB   DDOTR
+2961 5411 47 a3                            FDB   SPACE
+2962 5413 43 0d                            FDB   SEMIS
+2963                               
+2964 5415 81                               FCB   $81
+2965 5416 ae                               FCB   $AE
+2966 5417 54 06                            FDB   DDOT-5
+2967 5419 44 e4                    DOT     FDB   DOCOL
+2968 541b 50 03                            FDB   STOD
+2969 541d 54 0b                            FDB   DDOT
+2970 541f 43 0d                            FDB   SEMIS
+2971                               
+2972 5421 81                               FCB   $81
+2973 5422 bf                               FCB   $BF
+2974 5423 54 15                            FDB   DOT-4
+2975 5425 44 e4                    QUES    FDB   DOCOL
+2976 5427 44 67                            FDB   AT
+2977 5429 54 19                            FDB   DOT
+2978 542b 43 0d                            FDB   SEMIS
+2979                               
+2980 542d 82                               FCB   $82
+2981 542e 55                               FCC   'U'
+2982 542f ae                               FCB   $AE
+2983 5430 54 21                            FDB   QUES-4
+2984 5432 44 e4                    UDOT    FDB   DOCOL
+2985 5434 45 59                            FDB   ZERO
+2986 5436 54 0b                            FDB   DDOT
+2987 5438 43 0d                            FDB   SEMIS
+2988                               
+2989 543a 85                               FCB   $85
+2990 543b 56 4c 49 53                      FCC   'VLIS'
+2991 543f d4                               FCB   $D4
+2992 5440 54 2d                            FDB   UDOT-5
+2993 5442 44 e4                    VLIST   FDB   DOCOL
+2994 5444 46 89                            FDB   BASE
+2995 5446 44 67                            FDB   AT
+2996 5448 43 2c                            FDB   TOR
+2997 544a 49 38                            FDB   HEX
+2998 544c 41 d2                            FDB   CR
+2999 544e 41 d2                            FDB   CR
+3000 5450 40 37                            FDB   LIT
+3001 5452 00 00                            FDB   0
+3002 5454 46 3f                            FDB   OUTT
+3003 5456 44 9a                            FDB   STORE
+3004 5458 46 64                            FDB   CONT
+3005 545a 44 67                            FDB   AT
+3006 545c 44 67                            FDB   AT
+3007 545e 44 1e                    VLIST1  FDB   DUP
+3008 5460 44 1e                            FDB   DUP
+3009 5462 40 37                            FDB   LIT
+3010 5464 00 00                            FDB   0
+3011 5466 53 56                            FDB   BDIGS
+3012 5468 53 94                            FDB   DIG
+3013 546a 53 94                            FDB   DIG
+3014 546c 53 94                            FDB   DIG
+3015 546e 53 94                            FDB   DIG
+3016 5470 53 65                            FDB   EDIGS
+3017 5472 49 d2                            FDB   TYPES
+3018 5474 44 1e                            FDB   DUP
+3019 5476 46 c3                            FDB   ONEP
+3020 5478 44 76                            FDB   CAT
+3021 547a 40 37                            FDB   LIT
+3022 547c 00 7f                            FDB   $007F
+3023 547e 42 8e                            FDB   ANDD
+3024 5480 40 6e                            FDB   ZBRAN
+3025 5482 00 0a                            FDB   VLIST2-*
+3026 5484 47 a3                            FDB   SPACE
+3027 5486 4d 06                            FDB   IDDOT
+3028 5488 40 5a                            FDB   BRAN
+3029 548a 00 0c                            FDB   VLIST3-*
+3030 548c 4a 33                    VLIST2  FDB   PDOTQ
+3031 548e 05                               FCB   5
+3032 548f 20 6e 75 6c 6c                   FCC   ' null'
+3033 5494 43 fb                            FDB   DROP
+3034 5496 46 3f                    VLIST3  FDB   OUTT
+3035 5498 44 67                            FDB   AT
+3036 549a 40 37                            FDB   LIT
+3037 549c 00 3c                            FDB   60
+3038 549e 47 7d                            FDB   GREAT
+3039 54a0 40 6e                            FDB   ZBRAN
+3040 54a2 00 10                            FDB   VLIST4-*
+3041 54a4 41 d2                            FDB   CR
+3042 54a6 40 37                            FDB   LIT
+3043 54a8 00 00                            FDB   0
+3044 54aa 46 3f                            FDB   OUTT
+3045 54ac 44 9a                            FDB   STORE
+3046 54ae 40 5a                            FDB   BRAN
+3047 54b0 00 12                            FDB   VLIST5-*
+3048 54b2 40 37                    VLIST4  FDB   LIT
+3049 54b4 00 14                            FDB   20
+3050 54b6 46 3f                            FDB   OUTT
+3051 54b8 44 67                            FDB   AT
+3052 54ba 43 ea                            FDB   OVER
+3053 54bc 50 ee                            FDB   MOD
+3054 54be 47 26                            FDB   SUBB
+3055 54c0 53 39                            FDB   SPACS
+3056 54c2 48 32                    VLIST5  FDB   PFA
+3057 54c4 47 fe                            FDB   LFA
+3058 54c6 44 67                            FDB   AT
+3059 54c8 44 1e                            FDB   DUP
+3060 54ca 43 50                            FDB   ZEQU
+3061 54cc 41 c7                            FDB   QTERM
+3062 54ce 44 1e                            FDB   DUP
+3063 54d0 40 6e                            FDB   ZBRAN
+3064 54d2 00 06                            FDB   VLIST6-*
+3065 54d4 41 b5                            FDB   KEY
+3066 54d6 43 fb                            FDB   DROP
+3067 54d8 42 a1                    VLIST6  FDB   ORR
+3068 54da 40 6e                            FDB   ZBRAN
+3069 54dc ff 82                            FDB   VLIST1-*
+3070 54de 43 fb                            FDB   DROP
+3071 54e0 41 d2                            FDB   CR
+3072 54e2 41 d2                            FDB   CR
+3073 54e4 43 3b                            FDB   FROMR
+3074 54e6 46 89                            FDB   BASE
+3075 54e8 44 9a                            FDB   STORE
+3076 54ea 43 0d                            FDB   SEMIS
+3077                               
+3078 54ec 84                               FCB   $84
+3079 54ed 2e 43 50                         FCC   '.CP'
+3080 54f0 d5                               FCB   $D5
+3081 54f1 54 3a                            FDB   VLIST-8
+3082 54f3 44 e4                    DOTCPU  FDB   DOCOL
+3083 54f5 4a 33                            FDB   PDOTQ
+3084 54f7 05                               FCB   5
+3085 54f8 36 38 30 39 20                   FCC   '6809 '
+3086 54fd 43 0d                            FDB   SEMIS
+3087                               
+3088 54ff 84                               FCB   $84
+3089 5500 44 55 4d                         FCC   'DUM'
+3090 5503 d0                               FCB   $D0
+3091 5504 54 ec                            FDB   DOTCPU-7
+3092 5506 44 e4                    DUMP    FDB   DOCOL
+3093 5508 46 89                            FDB   BASE
+3094 550a 44 67                            FDB   AT
+3095 550c 43 2c                            FDB   TOR
+3096 550e 49 38                            FDB   HEX
+3097 5510 41 d2                            FDB   CR
+3098 5512 41 d2                            FDB   CR
+3099 5514 40 37                            FDB   LIT
+3100 5516 00 05                            FDB   5
+3101 5518 53 39                            FDB   SPACS
+3102 551a 40 37                            FDB   LIT
+3103 551c 00 10                            FDB   16
+3104 551e 40 37                            FDB   LIT
+3105 5520 00 00                            FDB   0
+3106 5522 40 b4                            FDB   XDO
+3107 5524 40 c2                    DUMP1   FDB   IDO
+3108 5526 40 37                            FDB   LIT
+3109 5528 00 03                            FDB   3
+3110 552a 53 fa                            FDB   DOTR
+3111 552c 40 87                            FDB   XLOOP
+3112 552e ff f6                            FDB   DUMP1-*
+3113 5530 40 37                            FDB   LIT
+3114 5532 00 02                            FDB   2
+3115 5534 53 39                            FDB   SPACS
+3116 5536 40 37                            FDB   LIT
+3117 5538 00 10                            FDB   16
+3118 553a 40 37                            FDB   LIT
+3119 553c 00 00                            FDB   0
+3120 553e 40 b4                            FDB   XDO
+3121 5540 40 c2                    DUMP2   FDB   IDO
+3122 5542 40 37                            FDB   LIT
+3123 5544 00 00                            FDB   0
+3124 5546 53 56                            FDB   BDIGS
+3125 5548 53 94                            FDB   DIG
+3126 554a 53 65                            FDB   EDIGS
+3127 554c 49 d2                            FDB   TYPES
+3128 554e 40 87                            FDB   XLOOP
+3129 5550 ff f0                            FDB   DUMP2-*
+3130 5552 41 d2                            FDB   CR
+3131 5554 43 ea                            FDB   OVER
+3132 5556 43 83                            FDB   PLUS
+3133 5558 44 0a                            FDB   SWAP
+3134 555a 44 1e                            FDB   DUP
+3135 555c 40 37                            FDB   LIT
+3136 555e 00 0f                            FDB   15
+3137 5560 42 8e                            FDB   ANDD
+3138 5562 42 b5                            FDB   XORR
+3139 5564 40 b4                            FDB   XDO
+3140 5566 41 d2                    DUMP3   FDB   CR
+3141 5568 40 c2                            FDB   IDO
+3142 556a 40 37                            FDB   LIT
+3143 556c 00 00                            FDB   0
+3144 556e 40 37                            FDB   LIT
+3145 5570 00 04                            FDB   4
+3146 5572 53 d7                            FDB   DDOTR
+3147 5574 47 a3                            FDB   SPACE
+3148 5576 40 c2                            FDB   IDO
+3149 5578 40 37                            FDB   LIT
+3150 557a 00 10                            FDB   16
+3151 557c 43 83                            FDB   PLUS
+3152 557e 40 c2                            FDB   IDO
+3153 5580 44 2f                            FDB   TDUP
+3154 5582 40 b4                            FDB   XDO
+3155 5584 40 c2                    DUMP4   FDB   IDO
+3156 5586 44 76                            FDB   CAT
+3157 5588 47 a3                            FDB   SPACE
+3158 558a 40 37                            FDB   LIT
+3159 558c 00 00                            FDB   0
+3160 558e 53 56                            FDB   BDIGS
+3161 5590 53 94                            FDB   DIG
+3162 5592 53 94                            FDB   DIG
+3163 5594 53 65                            FDB   EDIGS
+3164 5596 49 d2                            FDB   TYPES
+3165 5598 40 87                            FDB   XLOOP
+3166 559a ff ea                            FDB   DUMP4-*
+3167 559c 40 37                            FDB   LIT
+3168 559e 00 02                            FDB   2
+3169 55a0 53 39                            FDB   SPACS
+3170 55a2 40 b4                            FDB   XDO
+3171 55a4 40 c2                    DUMP5   FDB   IDO
+3172 55a6 44 76                            FDB   CAT
+3173 55a8 44 1e                            FDB   DUP
+3174 55aa 40 37                            FDB   LIT
+3175 55ac 00 20                            FDB   32
+3176 55ae 47 44                            FDB   LESS
+3177 55b0 43 ea                            FDB   OVER
+3178 55b2 40 37                            FDB   LIT
+3179 55b4 00 7e                            FDB   126
+3180 55b6 47 7d                            FDB   GREAT
+3181 55b8 42 a1                            FDB   ORR
+3182 55ba 40 6e                            FDB   ZBRAN
+3183 55bc 00 08                            FDB   DUMP6-*
+3184 55be 43 fb                            FDB   DROP
+3185 55c0 40 37                            FDB   LIT
+3186 55c2 00 2e                            FDB   46
+3187 55c4 41 a3                    DUMP6   FDB   EMIT
+3188 55c6 40 87                            FDB   XLOOP
+3189 55c8 ff dc                            FDB   DUMP5-*
+3190 55ca 40 37                            FDB   LIT
+3191 55cc 00 10                            FDB   16
+3192 55ce 40 a7                            FDB   XPLOO
+3193 55d0 ff 96                            FDB   DUMP3-*
+3194 55d2 41 d2                            FDB   CR
+3195 55d4 43 3b                            FDB   FROMR
+3196 55d6 46 89                            FDB   BASE
+3197 55d8 44 9a                            FDB   STORE
+3198 55da 43 0d                            FDB   SEMIS
+3199                               
+3200                               **************************************************
+3201                               *                                                *
+3202                               *   The following 2 words are used to burn the   *
+3203                               *   2k EEPROM located at address 0000 on the     *
+3204                               *   development system. They may be removed as   *
+3205                               *   long as the LFA's are re-adjusted.           *
+3206                               *                                                *
+3207                               **************************************************
+3208 55dc 84                               FCB   $84
+3209 55dd 45 45 43                         FCC   'EEC'
+3210 55e0 a1                               FCB   $A1
+3211 55e1 54 ff                            FDB   DUMP-7
+3212 55e3 55 e5                    EECSTO  FDB   *+2            ; On entry Address is top of stack, Data is second
+3213 55e5 ec 42              [ 6 ]         LDD   2,U            ; Get byte in B, address is top of stack
+3214 55e7 86 ff              [ 2 ]         LDA   #$FF           ; Erase byte
+3215 55e9 a7 d4              [ 7 ]         STA   [0,U]
+3216 55eb 8d 0e              [ 7 ]         BSR   DELAY          ; Wait for delay
+3217 55ed a6 d4              [ 7 ]         LDA   [0,U]          ; Read data
+3218 55ef e7 d4              [ 7 ]         STB   [0,U]          ; Store data
+3219 55f1 8d 08              [ 7 ]         BSR   DELAY          ; Wait for delay
+3220 55f3 e6 d4              [ 7 ]         LDB   [0,U]          ; Read data
+3221 55f5 33 44              [ 5 ]         LEAU  4,U            ; Drop address and data
+3222 55f7 ae a1              [ 8 ]         LDX   ,Y++           ; NEXT
+3223 55f9 6e 91              [ 9 ]         JMP   [,X++]
+3224                               
+3225 55fb 8e 04 70           [ 3 ] DELAY   LDX   #$0470
+3226 55fe 30 1f              [ 5 ] DELAY1  LEAX  -1,X
+3227 5600 26 fc              [ 3 ]         BNE   DELAY1
+3228 5602 39                 [ 5 ]         RTS
+3229                               
+3230 5603 86                               FCB   $86
+3231 5604 45 45 4d 4f 56                   FCC   'EEMOV'
+3232 5609 c5                               FCB   $C5
+3233 560a 55 dc                            FDB   EECSTO-7
+3234 560c 44 e4                    EEMOV   FDB   DOCOL
+3235 560e 40 37                            FDB   LIT
+3236 5610 00 00                            FDB   0
+3237 5612 40 b4                            FDB   XDO
+3238 5614 44 1e                    EEMO1   FDB   DUP
+3239 5616 46 c3                            FDB   ONEP
+3240 5618 47 8b                            FDB   ROT
+3241 561a 44 1e                            FDB   DUP
+3242 561c 46 c3                            FDB   ONEP
+3243 561e 43 2c                            FDB   TOR
+3244 5620 44 76                            FDB   CAT
+3245 5622 47 8b                            FDB   ROT
+3246 5624 55 e3                            FDB   EECSTO
+3247 5626 43 3b                            FDB   FROMR
+3248 5628 44 0a                            FDB   SWAP
+3249 562a 40 87                            FDB   XLOOP
+3250 562c ff e8                            FDB   EEMO1-*
+3251 562e 43 fb                            FDB   DROP
+3252 5630 43 fb                            FDB   DROP
+3253 5632 43 0d                            FDB   SEMIS
+3254                               
+3255                               **************************************************
+3256                               *                                                *
+3257                               *    The following is copied to RAM by COLD      *
+3258                               *                                                *
+3259                               **************************************************
+3260 5634 c5                       FORTHS  FCB   $C5            ; The start of the FORTH vocabulary
+3261 5635 46 4f 52 54                      FCC   'FORT'
+3262 5639 c8                               FCB   $C8
+3263 563a 56 03                            FDB   EEMOV-9
+3264 563c 49 ac                    FORTH   FDB   DODOE
+3265 563e 4e a2                            FDB   DOVOC
+3266 5640 81 a0                            FDB   $81A0
+3267 5642 20 12                            FDB   RTASK-7
+3268 5644 00 00                            FDB   0
+3269                               
+3270 5646 84                               FCB   $84
+3271 5647 54 41 53                         FCC   'TAS'
+3272 564a cb                               FCB   $CB
+3273 564b 20 00                            FDB   RFORTH-8
+3274 564d 44 e4                    TASK    FDB   DOCOL          ; Last word in vocabulary
+3275 564f 43 0d                            FDB   SEMIS
+3276 5651                          TASKE   EQU   *              ; The end of the ROMable dictionary
+3277                               
+3278 2008                          RFORTH  EQU   RAMS+FORTH-FORTHS        ; Location of FORTH in RAM
+3279 2019                          RTASK   EQU   RAMS+TASK-FORTHS         ; Location of TASK in RAM
+3280 201d                          INITDP  EQU   RAMS+TASKE-FORTHS        ; Initial DP in RAM

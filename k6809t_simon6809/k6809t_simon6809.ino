@@ -33,11 +33,15 @@
 // 9/29/2019    Bring-up on Teensy 3.5.                             Erturk
 // 19 Jan 2019  Add Reset and NMI buttons                           DJRM
 // 26 May 2020  Add ACIA 6850
+//  5 June 2020 Add ACIA 6551, Character LCD device
 
 //  File dataFile = SD.open("ef09.bin");
 //  File dataFile = SD.open("figF09.bin");
 //  #define DATAFILE "basic2.bin"
-#define DATAFILE "monitor.bin"
+//  #define DATAFILE "monitor.bin"
+//  #define DATAFILE "figF09.bin"
+#define DATAFILE "forth9.bin"
+#define DATALOC   0x4000
 
 #define nWRITE_ROM
 
@@ -645,7 +649,7 @@ void setup()
   File dataFile = SD.open(DATAFILE);
   // if the file is available, read it:
   if (dataFile) {
-    i=0x400;
+    i=DATALOC;
     while (dataFile.available()) {
       dataFile.read(&buff,1);
       RAM[i]=buff;
@@ -653,7 +657,8 @@ void setup()
     }
     dataFile.close();
     Serial.print(i);
-    Serial.println(" bytes application data read from file");    
+    Serial.print(" bytes application data read from file to address 0x");   
+    Serial.println(DATALOC,HEX); 
   }
   // if the file isn't open, pop up an error:
   else {
